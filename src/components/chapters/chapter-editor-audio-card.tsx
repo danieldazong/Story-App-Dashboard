@@ -26,9 +26,18 @@ function parseMmSs(value: string): number | null {
 export function ChapterEditorAudioCard({
   audio,
   onAudioChange,
+  onPersistDuration,
+  durationPending = false,
 }: {
   audio: AudioAsset;
   onAudioChange: (audio: AudioAsset) => void;
+  /**
+   * Persists a manually-entered duration immediately, independently of the
+   * form's Save. This is the fallback for detection reporting Infinity/NaN, so
+   * it must work even though audio upload is not implemented yet.
+   */
+  onPersistDuration?: (seconds: number) => Promise<boolean>;
+  durationPending?: boolean;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioElRef = useRef<HTMLAudioElement>(null);
@@ -81,13 +90,22 @@ export function ChapterEditorAudioCard({
     setEditingDuration(true);
   }
 
-  function saveDuration() {
+  async function saveDuration() {
     if (audio.state !== "ready") return;
     const seconds = parseMmSs(durationInput);
     if (seconds === null) {
       setDurationError("Use mm:ss, e.g. 09:14.");
       return;
     }
+
+    if (onPersistDuration) {
+      const saved = await onPersistDuration(seconds);
+      if (!saved) {
+        setDurationError("Couldn't save the duration. Try again.");
+        return;
+      }
+    }
+
     onAudioChange({ ...audio, durationSeconds: seconds, durationSource: "manual" });
     setEditingDuration(false);
   }
@@ -221,11 +239,19 @@ export function ChapterEditorAudioCard({
             )}
           </div>
           <DialogFooter>
-            <Button variant="muted" onClick={() => setEditingDuration(false)}>
+            <Button
+              variant="muted"
+              disabled={durationPending}
+              onClick={() => setEditingDuration(false)}
+            >
               Cancel
             </Button>
-            <Button variant="outline" onClick={saveDuration}>
-              Save duration
+            <Button
+              variant="outline"
+              disabled={durationPending}
+              onClick={saveDuration}
+            >
+              {durationPending ? "Saving…" : "Save duration"}
             </Button>
           </DialogFooter>
         </DialogContent>

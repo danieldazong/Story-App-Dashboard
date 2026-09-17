@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
@@ -10,6 +11,7 @@ import { Breadcrumbs } from "@/components/shell/breadcrumbs";
 import { ChapterEditorScriptCard } from "@/components/chapters/chapter-editor-script-card";
 import { ChapterEditorAudioCard } from "@/components/chapters/chapter-editor-audio-card";
 import { ChapterEditorSettingsCard } from "@/components/chapters/chapter-editor-settings-card";
+import { updateChapter } from "@/app/actions/chapters";
 import type { AudioAsset, Chapter, ChapterAccess } from "@/types/catalog";
 
 const chapterEditSchema = z.object({
@@ -46,10 +48,16 @@ export function ChapterEditor({
   previousHref: string | null;
   nextHref: string | null;
 }) {
+  const router = useRouter();
   const [audio, setAudio] = useState<AudioAsset>(chapter.audio);
   const [audioDirty, setAudioDirty] = useState(false);
-  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+  // Derived from the row's own updated_at, never from a local clock — the
+  // status line must never claim a save that did not happen.
+  const [savedAt, setSavedAt] = useState<Date | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
   const [, forceTick] = useState(0);
+  const [pending, setSaving] = useState(false);
+  const [durationPending, setDurationSaving] = useState(false);
 
   const form = useForm<ChapterEditValues>({
     resolver: zodResolver(chapterEditSchema),
@@ -66,22 +74,90 @@ export function ChapterEditor({
     return () => clearInterval(interval);
   }, []);
 
-  function onSubmit() {
-    // No server action exists yet (Clerk/Supabase land in prompts 11-18).
-    // This only updates local component state and the status line below —
-    // nothing is written to mock-catalog.ts or a database.
-    setLastSavedAt(new Date());
+  // The await stays outside any transition: React may be mid-render when a
+  // transition's continuation resumes, and react-hook-form's setError/reset
+  // write to Controller state, which throws "Cannot update a component while
+  // rendering a different component".
+  async function onSubmit(values: ChapterEditValues) {
+    setFormError(null);
+    setSaving(true);
+
+    const result = await updateChapter({
+      chapterId: chapter.id,
+      bookId,
+      number: values.number,
+      title: values.title,
+      access: values.access,
+      scriptText: values.scriptText,
+      scriptFileName: values.scriptFileName,
+    });
+
+    setSaving(false);
+
+    if (!result.ok) {
+      setFormError(result.formError);
+      for (const [field, message] of Object.entries(result.fieldErrors ?? {})) {
+        form.setError(field as keyof ChapterEditValues, { message });
+      }
+      return;
+    }
+
+    setSavedAt(new Date(result.data.updatedAt));
     setAudioDirty(false);
     toast.success("Chapter saved");
-    form.reset(form.getValues());
+
+    // resetDefaultValues(), not reset() — reset() re-registers every field and
+    // re-runs the schema, cascading setState into sibling Controllers during
+    // render ("Cannot update a component while rendering a different
+    // component"). This is the same defect fixed in book-editor.tsx and
+    // settings-screen.tsx; see AGENTS.md, Debugging Playbooks.
+    form.resetDefaultValues(values);
+
+    // The chapter number is part of this route, so a number change moves the
+    // page. Otherwise nothing further is needed: updateChapter() already
+    // revalidated this route, and the Server Action response carries the
+    // refreshed payload — calling router.refresh() as well fired a second full
+    // round trip for data already in flight. See AGENTS.md, Performance Rules.
+    if (result.data.number !== chapter.number) {
+      router.replace(`/books/${bookId}/chapters/${result.data.number}`);
+    }
+  }
+
+  async function persistDuration(seconds: number): Promise<boolean> {
+    setDurationSaving(true);
+
+    const result = await updateChapter({
+      chapterId: chapter.id,
+      bookId,
+      number: form.getValues("number"),
+      title: form.getValues("title"),
+      access: form.getValues("access"),
+      scriptText: form.getValues("scriptText"),
+      scriptFileName: form.getValues("scriptFileName"),
+      audioDurationSeconds: seconds,
+      audioDurationSource: "manual",
+    });
+
+    setDurationSaving(false);
+
+    if (result.ok) {
+      setSavedAt(new Date(result.data.updatedAt));
+      toast.success("Duration saved");
+      // updateChapter() already revalidated this route — see AGENTS.md,
+      // Performance Rules.
+    } else {
+      toast.error(result.formError);
+    }
+
+    return result.ok;
   }
 
   const statusLine = (() => {
     if (isDirty) return "Unsaved changes";
-    if (lastSavedAt) {
+    if (savedAt) {
       const minutes = Math.max(
         0,
-        Math.round((Date.now() - lastSavedAt.getTime()) / 60_000),
+        Math.round((Date.now() - savedAt.getTime()) / 60_000),
       );
       return minutes === 0 ? "Saved just now" : `Saved ${minutes} min ago`;
     }
@@ -110,12 +186,17 @@ export function ChapterEditor({
           <div className="card__header-actions">
             <Button
               onClick={form.handleSubmit(onSubmit)}
-              disabled={!isDirty || !form.formState.isValid}
+              disabled={!isDirty || !form.formState.isValid || pending}
             >
-              Save chapter
+              {pending ? "Saving…" : "Save chapter"}
             </Button>
           </div>
         </div>
+        {formError && (
+          <p className="field-group__helper field-group__helper--error">
+            {formError}
+          </p>
+        )}
       </div>
 
       <div className="grid grid-cols-3 gap-6">
@@ -142,6 +223,8 @@ export function ChapterEditor({
               setAudio(next);
               setAudioDirty(true);
             }}
+            onPersistDuration={persistDuration}
+            durationPending={durationPending}
           />
 
           <ChapterEditorSettingsCard

@@ -28,16 +28,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { BookCoverThumbnail } from "@/components/books/book-cover-thumbnail";
-import { bookAudioProgress, bookChapterProgress } from "@/lib/catalog";
-import type { Book, Chapter } from "@/types/catalog";
+import { DeleteBookDialog } from "@/components/books/delete-book-dialog";
+import type { BookListRow } from "@/lib/queries";
 
-type BookRow = {
-  book: Book;
-  chapters: { ready: number; total: number };
-  audio: { ready: number; total: number };
-};
-
-const columnHelper = createColumnHelper<BookRow>();
+const columnHelper = createColumnHelper<BookListRow>();
 
 function RatioCell({
   ready,
@@ -58,20 +52,10 @@ function RatioCell({
   );
 }
 
-export function BooksTable({ books, chapters }: { books: Book[]; chapters: Chapter[] }) {
+export function BooksTable({ rows }: { rows: BookListRow[] }) {
   const router = useRouter();
   const [search, setSearch] = useState("");
-
-  const rows = useMemo<BookRow[]>(() => {
-    return books.map((book) => {
-      const bookChapters = chapters.filter((c) => c.bookId === book.id);
-      return {
-        book,
-        chapters: bookChapterProgress(bookChapters),
-        audio: bookAudioProgress(bookChapters),
-      };
-    });
-  }, [books, chapters]);
+  const [pendingDelete, setPendingDelete] = useState<BookListRow | null>(null);
 
   const columns = useMemo(
     () => [
@@ -139,7 +123,13 @@ export function BooksTable({ books, chapters }: { books: Book[]; chapters: Chapt
                   <DropdownMenuItem onClick={() => router.push(`/books/${bookId}`)}>
                     Open
                   </DropdownMenuItem>
-                  <DropdownMenuItem disabled className="text-destructive">
+                  <DropdownMenuItem
+                    className="text-destructive"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setPendingDelete(row.original);
+                    }}
+                  >
                     Delete book
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -193,7 +183,7 @@ export function BooksTable({ books, chapters }: { books: Book[]; chapters: Chapt
       </div>
 
       <div className="card">
-        {books.length === 0 ? (
+        {rows.length === 0 ? (
           <div className="flex flex-col gap-3 p-6">
             <p className="text-body text-text">No books yet</p>
             <p className="card__sub-line">
@@ -259,8 +249,20 @@ export function BooksTable({ books, chapters }: { books: Book[]; chapters: Chapt
       </div>
 
       <p className="text-helper text-muted">
-        {books.length} {books.length === 1 ? "book" : "books"}
+        {rows.length} {rows.length === 1 ? "book" : "books"}
       </p>
+
+      {pendingDelete && (
+        <DeleteBookDialog
+          bookId={pendingDelete.book.id}
+          bookTitle={pendingDelete.book.title}
+          chapterCount={pendingDelete.chapters.total}
+          open
+          onOpenChange={(open) => {
+            if (!open) setPendingDelete(null);
+          }}
+        />
+      )}
     </div>
   );
 }

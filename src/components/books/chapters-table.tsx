@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -32,8 +32,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { deleteChapter, updateChapterAccess } from "@/app/actions/chapters";
 import { bookAudioProgress, bookChapterProgress, formatDuration } from "@/lib/catalog";
-import type { Chapter } from "@/types/catalog";
+import type { Chapter, ChapterAccess } from "@/types/catalog";
 
 const columnHelper = createColumnHelper<Chapter>();
 
@@ -41,25 +42,51 @@ export function ChaptersCard({
   bookId,
   chapters,
   onAddChapter,
-  onToggleAccess,
-  onDeleteChapter,
+  onChanged,
 }: {
   bookId: string;
   chapters: Chapter[];
   onAddChapter: () => void;
-  onToggleAccess: (chapterId: string) => void;
-  onDeleteChapter: (chapterId: string) => void;
+  onChanged: () => void;
 }) {
   const router = useRouter();
   const [pendingDelete, setPendingDelete] = useState<Chapter | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleting, startDeleting] = useTransition();
+
+  // Optimistic access state: a single boolean flip where instant feedback
+  // matters while working down a chapter list. Everything else waits for the
+  // server. Cleared on refresh, reverted on failure.
+  const [optimisticAccess, setOptimisticAccess] = useState<
+    Record<string, ChapterAccess>
+  >({});
 
   // Before the book is saved there is no real book id, so a chapter page
   // would have nowhere to route to (`/books//chapters/<n>` — a real 404).
-  // Every navigation surface below is suppressed in that state instead.
   const canOpenChapter = bookId !== "";
 
   const scriptProgress = useMemo(() => bookChapterProgress(chapters), [chapters]);
   const audioProgress = useMemo(() => bookAudioProgress(chapters), [chapters]);
+
+  function handleToggleAccess(chapter: Chapter) {
+    const current = optimisticAccess[chapter.id] ?? chapter.access;
+    const next: ChapterAccess = current === "free" ? "locked" : "free";
+
+    setOptimisticAccess((state) => ({ ...state, [chapter.id]: next }));
+
+    void (async () => {
+      const result = await updateChapterAccess(chapter.id, bookId, next);
+      if (!result.ok) {
+        setOptimisticAccess((state) => ({ ...state, [chapter.id]: current }));
+        toast.error(result.formError);
+        return;
+      }
+      toast.success(
+        `Chapter ${String(chapter.number).padStart(2, "0")} set to ${next}.`,
+      );
+      onChanged();
+    })();
+  }
 
   const columns = useMemo(
     () => [
@@ -133,8 +160,8 @@ export function ChaptersCard({
       }),
       columnHelper.accessor("access", {
         header: "Access",
-        cell: ({ getValue }) => {
-          const access = getValue();
+        cell: ({ row }) => {
+          const access = optimisticAccess[row.original.id] ?? row.original.access;
           return (
             <span
               className={
@@ -154,6 +181,7 @@ export function ChaptersCard({
         cell: ({ row }) => {
           const chapter = row.original;
           const href = `/books/${bookId}/chapters/${chapter.number}`;
+          const access = optimisticAccess[chapter.id] ?? chapter.access;
           return (
             <div className="flex items-center justify-end gap-2">
               <DropdownMenu>
@@ -182,20 +210,16 @@ export function ChaptersCard({
                   <DropdownMenuItem
                     onClick={(event) => {
                       event.stopPropagation();
-                      onToggleAccess(chapter.id);
-                      toast.success(
-                        `Chapter ${String(chapter.number).padStart(2, "0")} set to ${
-                          chapter.access === "free" ? "locked" : "free"
-                        }.`,
-                      );
+                      handleToggleAccess(chapter);
                     }}
                   >
-                    {chapter.access === "free" ? "Set locked" : "Set free"}
+                    {access === "free" ? "Set locked" : "Set free"}
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     className="text-destructive"
                     onClick={(event) => {
                       event.stopPropagation();
+                      setDeleteError(null);
                       setPendingDelete(chapter);
                     }}
                   >
@@ -209,7 +233,8 @@ export function ChaptersCard({
         },
       }),
     ],
-    [bookId, router, onToggleAccess, canOpenChapter],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [bookId, router, canOpenChapter, optimisticAccess],
   );
 
   const table = useReactTable({
@@ -311,7 +336,11 @@ export function ChaptersCard({
       <Dialog
         open={pendingDelete !== null}
         onOpenChange={(open) => {
-          if (!open) setPendingDelete(null);
+          if (deleting) return;
+          if (!open) {
+            setPendingDelete(null);
+            setDeleteError(null);
+          }
         }}
       >
         <DialogContent>
@@ -319,25 +348,43 @@ export function ChaptersCard({
             <DialogTitle>Delete chapter?</DialogTitle>
             <DialogDescription>
               {pendingDelete &&
-                `Chapter ${String(pendingDelete.number).padStart(2, "0")} — ${pendingDelete.title} will be removed. This can't be undone.`}
+                `Chapter ${String(pendingDelete.number).padStart(2, "0")} — ${pendingDelete.title} will be removed, along with its script text and its narration audio reference. This can't be undone.`}
             </DialogDescription>
           </DialogHeader>
+          {deleteError && (
+            <p className="field-group__helper field-group__helper--error">
+              {deleteError}
+            </p>
+          )}
           <DialogFooter>
-            <Button variant="muted" onClick={() => setPendingDelete(null)}>
+            <Button
+              variant="muted"
+              disabled={deleting}
+              onClick={() => setPendingDelete(null)}
+            >
               Cancel
             </Button>
             <Button
               variant="destructive"
+              disabled={deleting}
               onClick={() => {
                 if (!pendingDelete) return;
-                onDeleteChapter(pendingDelete.id);
-                toast.success(
-                  `Chapter ${String(pendingDelete.number).padStart(2, "0")} deleted.`,
-                );
-                setPendingDelete(null);
+                setDeleteError(null);
+                startDeleting(async () => {
+                  const result = await deleteChapter(pendingDelete.id, bookId);
+                  if (!result.ok) {
+                    setDeleteError(result.formError);
+                    return;
+                  }
+                  toast.success(
+                    `Chapter ${String(pendingDelete.number).padStart(2, "0")} deleted.`,
+                  );
+                  setPendingDelete(null);
+                  onChanged();
+                });
               }}
             >
-              Delete chapter
+              {deleting ? "Deleting…" : "Delete chapter"}
             </Button>
           </DialogFooter>
         </DialogContent>

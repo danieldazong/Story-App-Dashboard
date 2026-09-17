@@ -1,6 +1,7 @@
 "use client";
 
 import { forwardRef, useImperativeHandle, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useFormContext } from "react-hook-form";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -12,6 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { createBook } from "@/app/actions/books";
 import type { BookDetailsValues } from "@/components/books/book-details-form";
 import type { BookStatus } from "@/types/catalog";
 
@@ -19,27 +21,70 @@ export type CreateBookDialogHandle = {
   open: () => void;
 };
 
-export const CreateBookDialog = forwardRef<CreateBookDialogHandle, object>(
-  function CreateBookDialog(_props, ref) {
+export const CreateBookDialog = forwardRef<
+  CreateBookDialogHandle,
+  {
+    /**
+     * Called with the new book id after the row exists but before navigation,
+     * so pending work composed during creation can be saved against it.
+     */
+    onCreated?: (bookId: string) => Promise<void>;
+  }
+>(function CreateBookDialog({ onCreated }, ref) {
     const [open, setOpen] = useState(false);
+    const [formError, setFormError] = useState<string | null>(null);
+    const [pending, setSaving] = useState(false);
     const form = useFormContext<BookDetailsValues>();
+    const router = useRouter();
 
     useImperativeHandle(ref, () => ({
-      open: () => setOpen(true),
+      open: () => {
+        setFormError(null);
+        setOpen(true);
+      },
     }));
 
-    function handleChoice(status: BookStatus) {
-      // No server action exists yet (Clerk/Supabase land in prompts 11-18).
-      // Stay on this screen rather than fabricating a new book id.
-      form.setValue("status", status, { shouldDirty: true });
+    async function handleChoice(status: BookStatus) {
+      const values = form.getValues();
+      setFormError(null);
+      setSaving(true);
+
+      const result = await createBook({
+        title: values.title,
+        author: values.author,
+        shortDescription: values.shortDescription,
+        synopsis: values.synopsis,
+        genres: values.genres,
+        maturity: values.maturity,
+        status,
+        defaultChapterAccess: values.defaultChapterAccess,
+      });
+
+      if (!result.ok) {
+        setSaving(false);
+        setFormError(result.formError);
+        for (const [field, message] of Object.entries(
+          result.fieldErrors ?? {},
+        )) {
+          form.setError(field as keyof BookDetailsValues, { message });
+        }
+        return;
+      }
+
+      // Hand the new book id to whatever is holding unsaved work (a manuscript
+      // preview, a composed chapter) so it can be flushed before navigating.
+      await onCreated?.(result.data.id);
+
       toast.success(
-        `Validated as ${status === "draft" ? "a draft" : "published"}. Story creation isn't wired to a backend yet — nothing was saved.`,
+        status === "draft" ? "Story saved as a draft." : "Story published.",
       );
+      setSaving(false);
       setOpen(false);
+      router.push(`/books/${result.data.id}`);
     }
 
     return (
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={(next) => !pending && setOpen(next)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Create story</DialogTitle>
@@ -48,11 +93,24 @@ export const CreateBookDialog = forwardRef<CreateBookDialogHandle, object>(
               it&apos;s visible in reader clients.
             </DialogDescription>
           </DialogHeader>
+
+          {formError && (
+            <p className="field-group__helper field-group__helper--error">
+              {formError}
+            </p>
+          )}
+
           <DialogFooter>
-            <Button variant="muted" onClick={() => handleChoice("draft")}>
-              Save as draft
+            <Button
+              variant="muted"
+              disabled={pending}
+              onClick={() => handleChoice("draft")}
+            >
+              {pending ? "Saving…" : "Save as draft"}
             </Button>
-            <Button onClick={() => handleChoice("published")}>Publish</Button>
+            <Button disabled={pending} onClick={() => handleChoice("published")}>
+              {pending ? "Saving…" : "Publish"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

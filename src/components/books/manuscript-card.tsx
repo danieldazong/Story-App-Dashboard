@@ -1,6 +1,12 @@
 "use client";
 
-import { useRef, useState } from "react";
+import {
+  forwardRef,
+  useImperativeHandle,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -11,13 +17,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { createChapter } from "@/app/actions/chapters";
 import { extractDocxText } from "@/lib/docx";
 import {
   manuscriptSectionWordCount,
   splitManuscript,
   type ManuscriptSection,
 } from "@/lib/manuscript";
-import type { Chapter } from "@/types/catalog";
 
 type ManuscriptFile = {
   name: string;
@@ -33,21 +39,100 @@ type ManuscriptState =
 
 const TEXT_EXTENSIONS = [".txt", ".md"];
 
-export function ManuscriptCard({
-  bookId,
-  existingNumbers,
-  onImport,
-}: {
-  bookId: string;
-  existingNumbers: number[];
-  onImport: (chapters: Chapter[]) => void;
-}) {
+export type ManuscriptCardHandle = {
+  /**
+   * Creates the previewed chapters against a book id supplied by the caller.
+   *
+   * Used during story creation: the card's own `bookId` prop is still empty at
+   * that moment, so the id comes from the freshly-created row instead. Returns
+   * silently when there is nothing pending.
+   */
+  flush: (bookId: string) => Promise<void>;
+};
+
+export const ManuscriptCard = forwardRef<
+  ManuscriptCardHandle,
+  {
+    bookId: string;
+    existingNumbers: number[];
+    onImport: () => void;
+  }
+>(function ManuscriptCard({ bookId, existingNumbers, onImport }, ref) {
   const [state, setState] = useState<ManuscriptState>({ status: "empty" });
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importing, startTransition] = useTransition();
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // In create mode there is no book id yet, so Confirm defers: the split is
+  // held and written when Create Story runs (see flush below). The chapters
+  // still get a saved parent before they are inserted — the rule holds, the
+  // operator just does not have to re-upload after saving.
+  const isDeferred = bookId === "";
 
   function reset() {
     setState({ status: "empty" });
   }
+
+  /** Shared writer so Confirm and flush cannot drift apart. */
+  async function createSections(
+    targetBookId: string,
+    sections: ManuscriptSection[],
+    fileName: string,
+    startNumber: number,
+  ): Promise<{ created: number; error: string | null }> {
+    let nextNumber = startNumber;
+    let created = 0;
+
+    // Sequential, not parallel: chapter numbers race for the
+    // (book_id, number) unique constraint otherwise.
+    for (const section of sections) {
+      const result = await createChapter({
+        bookId: targetBookId,
+        number: nextNumber,
+        title: section.title,
+        scriptText: section.body,
+        scriptFileName: fileName,
+      });
+
+      if (!result.ok) {
+        return {
+          created,
+          error:
+            created === 0
+              ? result.formError
+              : `Created ${created} of ${sections.length} chapters, then stopped: ${result.formError}`,
+        };
+      }
+
+      created += 1;
+      nextNumber += 1;
+    }
+
+    return { created, error: null };
+  }
+
+  useImperativeHandle(ref, () => ({
+    async flush(newBookId: string) {
+      if (state.status !== "preview") return;
+
+      const { created, error } = await createSections(
+        newBookId,
+        state.sections,
+        state.file.name,
+        existingNumbers.length === 0 ? 1 : Math.max(...existingNumbers) + 1,
+      );
+
+      if (error) {
+        toast.error(error);
+        return;
+      }
+
+      toast.success(
+        `Created ${created} ${created === 1 ? "chapter" : "chapters"} from ${state.file.name}.`,
+      );
+      reset();
+    },
+  }));
 
   async function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -94,37 +179,41 @@ export function ManuscriptCard({
   function handleConfirm() {
     if (state.status !== "preview") return;
 
-    let nextNumber =
-      existingNumbers.length === 0 ? 1 : Math.max(...existingNumbers) + 1;
+    // Create mode: the book does not exist yet, so the preview stays on screen
+    // and is written by flush() when Create Story runs. Nothing is lost and
+    // nothing is claimed to have happened.
+    if (isDeferred) {
+      setImportError(null);
+      toast.success(
+        `${state.sections.length} chapters ready — they'll be created when you press Create Story.`,
+      );
+      return;
+    }
 
-    // No server action exists yet (Clerk/Supabase land in prompts 11-18).
-    // These chapters are appended to the book editor's local state only —
-    // they do not reach mock-catalog.ts and will not survive a page reload.
-    const newChapters: Chapter[] = state.sections.map((section) => {
-      const number = nextNumber;
-      nextNumber += 1;
-      return {
-        id: `${bookId || "book-draft"}-ch-local-${number}-${Date.now()}`,
+    const sections = state.sections;
+    const fileName = state.file.name;
+    setImportError(null);
+
+    startTransition(async () => {
+      const { created, error } = await createSections(
         bookId,
-        number,
-        title: section.title,
-        script: {
-          state: "ready",
-          fileName: state.file.name,
-          text: section.body,
-          wordCount: manuscriptSectionWordCount(section),
-        },
-        audio: { state: "missing" },
-        access: "locked",
-        updatedAt: new Date().toISOString(),
-      };
-    });
+        sections,
+        fileName,
+        existingNumbers.length === 0 ? 1 : Math.max(...existingNumbers) + 1,
+      );
 
-    onImport(newChapters);
-    toast.success(
-      `Created ${newChapters.length} ${newChapters.length === 1 ? "chapter" : "chapters"} from ${state.file.name}.`,
-    );
-    reset();
+      if (error) {
+        setImportError(error);
+        if (created > 0) onImport();
+        return;
+      }
+
+      toast.success(
+        `Created ${created} ${created === 1 ? "chapter" : "chapters"} from ${fileName}.`,
+      );
+      onImport();
+      reset();
+    });
   }
 
   return (
@@ -183,12 +272,27 @@ export function ManuscriptCard({
               </TableBody>
             </Table>
           </div>
+          {importError && (
+            <p className="field-group__helper field-group__helper--error">
+              {importError}
+            </p>
+          )}
+          {isDeferred && (
+            <p className="field-group__helper">
+              These chapters are created when you press Create Story.
+            </p>
+          )}
           <div className="flex items-center justify-end gap-3 border-t border-border pt-3">
-            <Button variant="muted" size="sm" onClick={reset}>
+            <Button
+              variant="muted"
+              size="sm"
+              disabled={importing}
+              onClick={reset}
+            >
               Discard
             </Button>
-            <Button size="sm" onClick={handleConfirm}>
-              Confirm
+            <Button size="sm" disabled={importing} onClick={handleConfirm}>
+              {importing ? "Creating…" : "Confirm"}
             </Button>
           </div>
         </div>
@@ -227,4 +331,4 @@ export function ManuscriptCard({
       <p className="field-group__helper">DOCX, TXT or MD · max 10 MB</p>
     </div>
   );
-}
+});

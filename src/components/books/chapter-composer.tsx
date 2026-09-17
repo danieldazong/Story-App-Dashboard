@@ -6,6 +6,7 @@ import {
   useImperativeHandle,
   useRef,
   useState,
+  useTransition,
 } from "react";
 import { toast } from "sonner";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -18,9 +19,9 @@ import {
   type NarrationAudioPreview,
 } from "@/components/chapters/narration-audio-card";
 import { ChapterSettingsCard } from "@/components/chapters/chapter-settings-card";
-import { countWords } from "@/lib/catalog";
+import { createChapter } from "@/app/actions/chapters";
 import { cn } from "@/lib/utils";
-import type { Chapter, ChapterAccess } from "@/types/catalog";
+import type { ChapterAccess } from "@/types/catalog";
 
 const composerSchema = z.object({
   number: z.number().int().min(1, "Chapter number must be at least 1"),
@@ -33,6 +34,15 @@ type ComposerValues = z.infer<typeof composerSchema>;
 
 export type ChapterComposerHandle = {
   focusTitle: () => void;
+  /**
+   * Creates the chapter currently composed, against a book id supplied by the
+   * caller.
+   *
+   * Used during story creation: the composer's own `bookId` prop is still empty
+   * at that moment, so the id comes from the freshly-created row instead.
+   * Returns silently when the form is empty or invalid.
+   */
+  flush: (bookId: string) => Promise<void>;
 };
 
 export const ChapterComposer = forwardRef<
@@ -42,7 +52,7 @@ export const ChapterComposer = forwardRef<
     nextNumber: number;
     defaultAccess: ChapterAccess;
     existingNumbers: number[];
-    onCreate: (chapter: Chapter) => void;
+    onCreate: () => void;
   }
 >(function ChapterComposer(
   { bookId, nextNumber, defaultAccess, existingNumbers, onCreate },
@@ -51,6 +61,8 @@ export const ChapterComposer = forwardRef<
   const [numberTaken, setNumberTaken] = useState<number | null>(null);
   const [highlighted, setHighlighted] = useState(false);
   const [scriptFileName, setScriptFileName] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
   const [audioPreview, setAudioPreview] =
     useState<NarrationAudioPreview | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -85,6 +97,38 @@ export const ChapterComposer = forwardRef<
       titleInputRef.current?.focus();
       setHighlighted(true);
     },
+    async flush(newBookId: string) {
+      const values = form.getValues();
+      // Nothing composed: an untitled, empty form is not pending work.
+      if (!values.title.trim()) return;
+
+      const text = values.scriptText?.trim() ?? "";
+      const result = await createChapter({
+        bookId: newBookId,
+        number: values.number,
+        title: values.title,
+        access: values.access,
+        scriptText: text,
+        scriptFileName: text === "" ? null : (scriptFileName ?? "Pasted text"),
+      });
+
+      if (!result.ok) {
+        toast.error(result.formError);
+        return;
+      }
+
+      toast.success(
+        `Chapter ${String(result.data.number).padStart(2, "0")} created.`,
+      );
+      form.reset({
+        number: result.data.number + 1,
+        title: "",
+        access: defaultAccess,
+        scriptText: "",
+      });
+      setScriptFileName(null);
+      setAudioPreview(null);
+    },
   }));
 
   const { title, access, number, scriptText } = form.watch();
@@ -98,50 +142,54 @@ export const ChapterComposer = forwardRef<
       return;
     }
     setNumberTaken(null);
+    setFormError(null);
 
     const text = values.scriptText?.trim() ?? "";
-    const newChapter: Chapter = {
-      id: `${bookId || "book-draft"}-ch-local-${values.number}-${Date.now()}`,
-      bookId,
-      number: values.number,
-      title: values.title,
-      script:
-        text === ""
-          ? { state: "missing" }
-          : {
-              state: "ready",
-              fileName: scriptFileName ?? "Pasted text",
-              text,
-              wordCount: countWords(text),
-            },
-      audio: audioPreview
-        ? {
-            state: "ready",
-            fileName: audioPreview.fileName,
-            sizeBytes: audioPreview.sizeBytes,
-            durationSeconds: audioPreview.durationSeconds ?? 0,
-            durationSource: "detected",
-            url: audioPreview.url,
-          }
-        : { state: "missing" },
-      access: values.access,
-      updatedAt: new Date().toISOString(),
-    };
 
-    // No server action exists yet (Clerk/Supabase land in prompts 11-18).
-    // This chapter is held in the book editor's local state only — it does
-    // not reach mock-catalog.ts and will not survive a page reload.
-    onCreate(newChapter);
-    toast.success(`Chapter ${String(values.number).padStart(2, "0")} created.`);
+    // Create mode: the book does not exist yet, so the composed chapter stays
+    // on screen and is written by flush() when Create Story runs. Nothing is
+    // lost, and nothing claims to have been saved.
+    if (bookId === "") {
+      toast.success(
+        `Chapter ${String(values.number).padStart(2, "0")} ready — it'll be created when you press Create Story.`,
+      );
+      return;
+    }
 
-    form.reset({
-      number: values.number + 1,
-      title: "",
-      access: defaultAccess,
-      scriptText: "",
+    startTransition(async () => {
+      const result = await createChapter({
+        bookId,
+        number: values.number,
+        title: values.title,
+        access: values.access,
+        scriptText: text,
+        scriptFileName: text === "" ? null : (scriptFileName ?? "Pasted text"),
+      });
+
+      if (!result.ok) {
+        setFormError(result.formError);
+        const numberError = result.fieldErrors?.number;
+        if (numberError) {
+          setNumberTaken(values.number);
+          form.setError("number", { message: numberError });
+        }
+        return;
+      }
+
+      // The narration preview is deliberately not carried over: audio upload
+      // lands in prompt 16, so there is no storage path to persist yet.
+      toast.success(`Chapter ${String(result.data.number).padStart(2, "0")} created.`);
+      onCreate();
+
+      form.reset({
+        number: result.data.number + 1,
+        title: "",
+        access: defaultAccess,
+        scriptText: "",
+      });
+      setScriptFileName(null);
+      setAudioPreview(null);
     });
-    setScriptFileName(null);
-    setAudioPreview(null);
   }
 
   return (
@@ -197,13 +245,25 @@ export const ChapterComposer = forwardRef<
             }
           />
 
+          {formError && (
+            <p className="field-group__helper field-group__helper--error">
+              {formError}
+            </p>
+          )}
+
+          {bookId === "" && (
+            <p className="field-group__helper">
+              This chapter is created when you press Create Story.
+            </p>
+          )}
+
           <Button
             type="button"
             className="w-full"
-            disabled={!form.formState.isValid}
+            disabled={!form.formState.isValid || pending}
             onClick={form.handleSubmit(onSubmit)}
           >
-            Create chapter
+            {pending ? "Creating…" : "Create chapter"}
           </Button>
         </div>
       </div>

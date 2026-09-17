@@ -188,6 +188,55 @@ Numeric disagreements between frames (the same serial showing different chapter 
 - duplicate upload buttons on the upload surfaces — one path only
 - invented telemetry in earlier frames (catalog status, bandwidth, session IDs, CDN info, ISBN lines) — delete all of it, do not build it
 
+## Debugging Playbooks
+
+Procedures for classes of bug this project has already lost time to. Each one records what the symptom looks like, what the cause turned out to be, and — most importantly — which plausible-sounding explanations are **already ruled out**, so they are not re-investigated.
+
+### Debugging `setState`-during-render (React + react-hook-form)
+
+**Symptom:** `Cannot update a component ('X') while rendering a different component ('Controller')`, usually after a form submit succeeds.
+
+**Step 1 — get the real stack before theorising.** The error overlay shows ~4 frames by default: the component *tree* (`FormField → SomeForm → SomeParent → SomePage`). That tells you where React was standing, **not who called `setState`**. Click **"Show N ignore-listed frame(s)"** and read the expanded trace. Three wrong fixes were shipped on this project by reasoning from the collapsed view. Do not skip this step; ask the user for the expanded stack if you cannot reproduce it yourself.
+
+**Step 2 — read the middle of the stack, not the ends.** The frames between React's scheduler and the component tree name the mechanism. On this project the answer was:
+
+```
+Controller → useController → register → updateValidAndValue
+  → _setValid → _runSchema → _updateIsValidating
+  → subject.next() → sibling Controller's subscriber → dispatchSetState
+```
+
+**Step 3 — understand the RHF cascade this reveals.** A form with N `Controller`s shares **one notification subject**. Anything that re-registers a field re-runs the resolver (when `mode: "onChange"` plus a schema resolver is configured) and publishes to that subject, which synchronously calls `setState` in *every other* field's subscriber. If React is mid-render when that fires, you get this warning. React names the *owner* of the updated component, which is often not where the offending call lives — see the owner/renderer note below.
+
+**Step 4 — find which API triggered the re-registration.** On this project it was `form.reset(values)` used to clear the dirty flag after a successful save.
+
+**The rule that prevents it: `reset()` is for discarding a form. `resetDefaultValues()` is for accepting a save.** `reset()` tears down and re-registers every field. `resetDefaultValues(values)` moves the dirty baseline **without touching user values**, so nothing re-registers, the resolver never re-runs, and the cascade never starts. RHF's own JSDoc names this exact use case: *"After a successful submission, update defaults to the submitted values so that dirtyFields/isDirty reflect changes made after that point."*
+
+**Already ruled out on this project — do not re-investigate:**
+
+| Suspected cause | Why it is not the cause |
+| --- | --- |
+| `await` inside `startTransition` | A real latent hazard, and the rewrite off `useTransition` was kept — but the warning reproduced from interactions containing no `await` at all. |
+| `ChapterComposer`'s `useEffect` → `form.setValue` | Targets the composer's *own* `useForm` instance; it can never name a different component as the updater. |
+| The submit path (`handleSubmit` → `setFormError`/`setSaving`) | `handleSubmit` is `async` and awaits `_runSchema()` before invoking the handler, so those land in a microtask continuation of the submit event, never in a render phase. |
+| `Controller` writing state during render | `Controller` is `(props) => props.render(useController(props))` — no side effects by design. |
+| `router.refresh()` | Async and wrapped in Next's own router transition. Never a synchronous trigger. |
+| `useWatch` re-renders on keystroke | Would fire while typing; this warning fired only after Save. Confirmed by user repro. |
+
+**Deferring is not fixing.** A `queueMicrotask(() => form.reset(values))` version shipped briefly and appeared to help. The next stack contained `processRootScheduleInMicrotask` — React flushing the same cascade *inside the microtask the fix had created*. It relocated the collision to a different tick. **Treat `queueMicrotask` / `setTimeout` / "defer it" as a smell whenever the root cause is not yet identified**: symptoms move, evidence gets muddier, and a testing round is burned.
+
+**Related React behaviour worth knowing: a component passed as a prop is rendered by the receiver but owned by the sender.** `<PageHeader action={<SaveButton />} />` creates `SaveButton` in the parent's render but renders it inside `PageHeader`. When it subscribes to external state, React attributes its updates to the *sender*. This is why these warnings routinely name two components that look unrelated to the actual call site — and why the component names in the message are a weak signal compared to the expanded stack.
+
+### Debugging "this looks like our bug but is actually the network"
+
+Several failures on this project presented as application errors and were not. Before changing code in response to a `fetch`/auth/load failure, check reachability from the machine itself:
+
+- **Clock skew.** A clock more than ~60s off makes every freshly-minted JWT look expired. This cost a debugging session once (184s skew produced an endless Clerk redirect loop that looked exactly like misconfigured keys). Compare local time against a server's `Date` header.
+- **Direct reachability.** `Invoke-WebRequest` the exact failing URL a few times. If it returns `200` repeatedly from the shell while the browser fails intermittently, it is a transport problem (on this machine: flaky IPv6 routing to Cloudflare), not a code defect.
+- **Known instances of this:** Clerk `/touch` timeouts, `ClerkRuntimeError: Failed to load Clerk JS`, and a `TypeError: fetch failed` that reached the UI. The first two required **no code change at all**. See `docs/AUTH-SETUP.md`.
+
+**But check whether the app handles it gracefully, which is a separate question.** The `fetch failed` incident revealed two genuine defects worth fixing even though the trigger was environmental: `describeDbError` leaked a raw `TypeError` string to the operator, and the cover upload hung forever at `0.0 KB` because no timeout guarded a Server Action call that could never resolve. A transient network fault is not your bug; silently hanging or showing a stack trace in response to one is.
+
 ### Known implementation defects — fix, do not replicate
 
 - **Chapters table column misalignment** — Text, Audio and Access header cells must share one column definition with their body cells so values line up under their own headers, not bunched under Title. The action column is fixed-width and right-aligned so `⋯` and `>` sit on a single vertical axis for every row.
@@ -770,6 +819,47 @@ Supabase bills roughly $0.09/GB uncached egress against $0.03/GB cached, with 25
 
 ---
 
+## Performance Rules
+
+### Measure before diagnosing
+
+Timings in the dev log are the starting point, not the answer. `POST /books/… 200 in 4.5s` with `updateBook … in 1300ms` means **3.2s of that response was not your action** — find where it went before changing the action.
+
+Measure the database floor directly before blaming code. A trivial `select id limit 1` against this project takes **~450ms** from the developer's machine (`us-east-1`, `t3.nano`). That number is the floor under every query, so a 1300ms action doing three serial round trips is *already near optimal* and restructuring it wins nothing.
+
+Two measurements that redirected the whole performance pass, and why:
+
+- **Parallel vs serial barely differed** (1355ms vs 1620ms for 3 queries). If latency were pure network distance, 3 parallel queries would cost about the same as 1. They didn't, which means queries **queue on the instance**, not on the wire. Parallelising helps far less than intuition suggests on a small instance.
+- **A `HEAD` request (near-zero server work) took 1244ms — longer than a real `select *` at 472ms.** Connection setup, not query work, dominates. That is the signature of an undersized instance, not a distant one.
+
+The conclusion to carry: on `t3.nano`, **instance size outranks every code-level fix**. Say so plainly rather than shipping refactors that cannot deliver what the numbers allow.
+
+### Never pay for the same data twice
+
+**A Server Action's response already carries the refreshed RSC payload for any route it revalidated.** Calling `router.refresh()` after an action that called `revalidatePath` fires a **second full round trip** for data already in flight. On this database that cost ~3s per save.
+
+Rule: if the action calls `revalidatePath` for the route the component is on, the component must **not** call `router.refresh()`. Removed from the Book editor save, the Chapter editor save, and the cover upload for exactly this reason.
+
+The exception is a callback fired from a *child* component about data owned by the *parent* route — verify the revalidation actually reaches the parent before removing it. Staleness there is silent and has no error to trace it back to, which is far worse than one extra request. `onImport` / `onCreate` / `onChanged` in `book-editor.tsx` were left alone on that basis; they fire on rare operations, not on every save.
+
+### Revalidate only what is on screen
+
+`revalidatePath("/")` invalidates the **dashboard**, which runs five queries (3 counts + the attention view + activity). Book and chapter mutations were calling it on every write, rebuilding the dashboard before the response could return — while the operator was looking at a book.
+
+Rule: revalidate the routes the mutation actually affects and that the operator can see. The dashboard revalidates on its own navigation.
+
+### One client per request
+
+`serverSupabase()` is wrapped in React's `cache()`. Without it, every call built a fresh client — a single render made several, each opening a connection and registering stream listeners, which produced the recurring `MaxListenersExceededWarning: 11 drain listeners added to [Gzip]`. Deduping is per-request, so a client is never shared between users and the auth boundary is unchanged.
+
+### Don't ship columns the page never renders
+
+`getBooks` deliberately omits `script_text` and documents why. The same discipline applies per-route: `/books/[bookId]` renders only `script.state` and `script.wordCount`, never `script.text`, yet `getChapters` selects `*` — shipping every chapter's full prose to a page that displays word counts. Measured: 895ms with `script_text`, 501ms without.
+
+**Verify the column is unused before dropping it.** "It's slow to fetch" and "it isn't needed" are different claims and were conflated once during this pass; `toChapter` builds `script.text` from that column, so removing it naively blanks every word count.
+
+---
+
 ## Data Model Notes
 
 `books` carries a `default_chapter_access` column (`chapter_access` enum, `not null default 'locked'`), planned but not yet migrated in this codebase — see Prompt Series Notes. Every chapter created inside a book — manually, by manuscript split, or by bulk import — inherits this value unless `app_settings.free_chapters_at_start` places the chapter inside the free run at the start of the book.
@@ -1001,6 +1091,91 @@ Two traps worth recording, because both produced convincing false results first:
 Bucket MIME allowlists are also live: uploading `text/plain` into `covers` or `audio` is rejected, and the correct types (`image/jpeg`, `audio/mpeg`) succeed.
 
 All probe objects were deleted afterwards; the three buckets are empty for prompt 13.
+
+**Prompt 13 (Supabase reads)** replaced every mock-data read with a real query. `data/mock-catalog.ts` and `data/mock-activity.ts` are **deleted**; nothing imports them. No screen's layout, copy or component structure changed.
+
+New modules:
+
+- **`lib/supabase.ts`** — `createSupabaseClient(getToken)` using the `accessToken` callback. The deprecated JWT-template-in-a-global-header pattern is documented in the file as forbidden.
+- **`lib/supabase-admin.ts`** — service-role client, unused by design. Its comment states the constraint: reaching for it to make a *read* work means the read is wrong.
+- **`lib/server-supabase.ts`** — `serverSupabase()` and `serverSupabaseWithSettings()`. Almost every screen needs `app_settings.public_cdn_domain` before it can turn a storage path into a URL, so fetching both together avoids a second round trip per page.
+- **`lib/catalog-mappers.ts`** — nullable columns → discriminated unions (`toScriptAsset`, `toAudioAsset`, `toCoverAsset`, `toBook`, `toChapter`) plus `storageUrl`. `audio_duration_source` is carried through so the Chapter editor keeps distinguishing `Detected` from `Edited`.
+- **`lib/queries.ts`** — the ten screen reads.
+- **`components/shell/query-error-card.tsx`** — the error state.
+
+**`QueryResult<T>` is the core discipline here.** Every query returns `{ok:true,data}` or `{ok:false,error}` rather than throwing or returning `[]` on failure. A failed request and an empty table must look different to the operator: one means "something is broken", the other means "create something". Swallowing an error into an empty array shows a reassuring empty catalog over a real outage — including an RLS rejection, which is the case most likely to *look* like emptiness.
+
+**`getBooks` deliberately does not select `script_text`.** It selects `book_id, script_text, audio_path` only to compute presence counts. Pulling every chapter's prose to render a list would move megabytes for a 148-chapter serial — the one performance mistake that actually bites at this schema's scale.
+
+**A schema change was needed and made:** `books.default_chapter_access` (migration `20260917000001`). AGENTS.md's Data Model Notes already specified this column; prompt 12's table definition omitted it. Prompt 13 forbids schema changes, so this is an explicit, approved deviation — but it is *completing* prompt 12's intent, not inventing something. It is deliberately not the same as `app_settings.default_chapter_access`: that one is "what a new book defaults to", this one is "what this serial defaults to". Collapsing them would lose per-serial paywall shape (1–3 free then locked, versus a fully free backlist title). No UI changed — the Book editor's existing Select simply has a real column behind it now.
+
+**`app_settings` has no row on a fresh database**, and prompt 12 forbids seeding one in a migration. `getAppSettings` therefore falls back to the `SETTINGS_DEFAULTS` constants when the table is empty. That is a real state the app must render in, not a placeholder — the row gets created by the Settings screen's own Save once writes land.
+
+Two gaps flagged rather than silently closed:
+
+1. **`NarrationAudioCard` still reads `SETTINGS_DEFAULTS`** for its accepted-formats line and max size, not `app_settings`. Threading real settings in would mean adding a prop to it and to every composer that renders it, which prompt 13 forbids. An operator who edits accepted formats in Settings will not see that card's constraint line change until the prop is added. Noted in the component too.
+2. **Writes still bypass the database entirely.** The composer, Manuscript import and Chapter editor Save all mutate local state and `sessionStorage` only — `createChapter`/`updateChapter`/`importManuscript` land in prompt 14. For this one prompt the dashboard *reads* from Postgres but *creates* into memory, so a chapter composed on screen will not appear in the Books list ratios, which now come from the database. That looks like a regression and is not one; it resolves in prompt 14.
+
+**Prompt 14 (Supabase writes)** made every form persist. `app/actions/` holds the mutation layer: `books.ts`, `chapters.ts`, `settings.ts`, plus `activity.ts` (the log helper) and `types.ts` (`ActionResult`). Nothing in the UI fabricates a row any more.
+
+Every action follows the same shape, in this order: `requireAdmin()` as the **first statement**, zod validation of the input, the mutation through the user-token client so RLS applies, an `activity_log` row, `revalidatePath` for each affected route, then a typed result. `lib/supabase-admin.ts` is still unused — no action needed it, which is the intended signal that the policies are right.
+
+**`ActionResult` carries form-level and field-level errors separately**, because a form needs to render "this field is wrong" inline and "the operation failed" above the primary action. Raw Supabase errors never reach the UI: `describeDbError` maps `42501`/`row-level security` to an authorisation message and `23505` to a conflict, and a chapter-number collision is resolved into a field error naming the conflicting chapter's title.
+
+**A silent zero-row write is treated as failure, not success.** An `update` or `delete` that returns no error but affects no rows means RLS filtered it out. Every such action checks the returned row (or `count`) and surfaces an authorisation message rather than toasting success over a change that did not happen.
+
+**Optimistic UI is used in exactly one place**, per the prompt: the chapter access toggle, where the change is one boolean and instant feedback matters while working down a list. It reverts on failure. Forms all wait for the server — a book save that showed success while silently failing is worse than one that took 300ms.
+
+Two places prompt 14 described a screen this app does not have. Both were raised and the resolution approved:
+
+1. **`Add chapter` does not create a blank row and navigate.** The prompt assumed it navigates to a chapter route; it actually scrolls to and focuses the Chapter composer, which is the single chapter-creation surface established in prompt 21. Following the prompt literally would have produced blank untitled chapters and made the composer redundant — a structural change. Instead the **composer's own `Create chapter` button** calls `createChapter`, which achieves the prompt's actual goal (a real row exists before the Chapter editor can open it) without discarding the composer.
+2. **The Books list has no `Add chapter` item to enable.** It was removed earlier at explicit request because it duplicated `Open`. It stays removed. `Delete book` on that menu is wired as specified, behind a type-the-title confirm.
+
+**The sessionStorage layer was deleted.** `lib/local-chapters.ts` and `components/chapters/chapter-editor-resolver.tsx` existed only because chapters lived in React state with no database behind them. Chapters persist now, so `writeLocalChapters` had no callers and the resolver was reading a store nothing wrote — its fallback path could never fire. Leaving it would have implied a mechanism that no longer exists. The chapter editor route now renders a plain "Chapter not found" when a chapter genuinely is not in the database.
+
+**A real defect was introduced and caught during prompt 14's verification: the Manuscript card toasted success over a write that never happened.** Changing `onImport`'s contract in `book-editor.tsx` (from "append these chapters to local state" to `() => router.refresh()`) orphaned its caller: `ManuscriptCard` still built client-side `Chapter` objects, handed them to a callback that now discarded them, then unconditionally toasted `Created 9 chapters`. Nothing was created. On `/books/new` it could not have been, since there is no book id to attach chapters to.
+
+That is precisely the failure this prompt exists to eliminate, so "bulk import stays as-is until prompt 18" could not mean "keeps lying". Fixed **within** prompt 14's scope by reusing the existing `createChapter` action in a sequential loop — each split section is just a chapter create, so no bulk path was added and prompt 18 still owns real bulk import. Sequential rather than parallel, because chapter numbers race for the `(book_id, number)` unique constraint otherwise. A partial failure now reports `Created N of M chapters, then stopped: <reason>` rather than claiming the whole import succeeded, and the card is disabled entirely when `bookId === ""`.
+
+**`setState` during render on save.** The Book editor logged `Cannot update a component ('BookEditor') while rendering a different component ('Controller')` on every successful save. It took four attempts. The full root cause, the three wrong diagnoses, and the reusable procedure are consolidated under **"Debugging `setState`-during-render (React + react-hook-form)"** in the Debugging Playbooks section near the top of this file — read that, not this paragraph, when the class of error recurs.
+
+Short version for this specific incident: the cause was `form.reset(values)` in the save tail, fixed with `form.resetDefaultValues(values)`. `settings-screen.tsx` had the identical pattern and got the identical fix. `create-book-dialog.tsx` never calls `reset` and is unaffected.
+
+**Correction (2026-09-17).** This paragraph previously claimed `chapter-editor.tsx`'s `form.reset` was "a genuine discard-and-reload path … so it was left alone". That was wrong. There is exactly one `form.reset` in that file and it sits in the save-acceptance tail, immediately after `toast.success("Chapter saved")` — structurally identical to the Book editor's. It was a latent third instance of the same defect, fixed with `resetDefaultValues` during the performance pass. The lesson is the doc's own: a claim about a call site must be re-verified against the file, not inherited from an earlier note.
+
+**Create mode now defers chapter work instead of blocking it.** The `bookId === ""` guard was correct — a chapter needs a saved parent — but the experience it produced was not: an operator could fill in a book, upload a manuscript, watch it split into nine chapters, compose a chapter, and then confirm none of it. The only path through was save → navigate to Books → reopen the book → re-upload everything. Work was being thrown away to satisfy a constraint that could be satisfied a moment later instead.
+
+Now `Confirm` and `Create chapter` stay enabled in create mode and hold their work on screen, saying plainly that it is created when Create Story runs. `CreateBookDialog` takes an `onCreated(bookId)` callback that fires **after the row exists but before navigation**; `BookEditor` uses it to call `flush(newBookId)` on `ManuscriptCardHandle` and `ChapterComposerHandle`, both exposed via `useImperativeHandle`. The chapters still get a saved parent before insertion — the governing rule is intact — the operator simply no longer has to re-enter everything. `ManuscriptCard`'s `createSections` is shared between `Confirm` and `flush` so the two paths cannot drift.
+
+**A copy addition was made under a prompt that forbids copy changes, deliberately and at explicit request.** On `/books/new` both the Chapter composer's `Create chapter` and the Manuscript card's `Confirm` are disabled, because `bookId === ""` until the story is saved — a chapter needs a parent row to belong to (Project Rules). That guard is correct and stays. But both buttons sat inert with **no stated reason**, which read as a broken screen rather than a precondition, and cost real confusion during verification. Each card now renders one muted line when `bookId === ""`: *"Press Create Story first — a chapter needs a saved story to belong to."* Nothing else changed: no layout, no guard removed, no control enabled. Flagged here because prompt 14 line 7 forbids copy changes without asking, and this one was asked for.
+
+**Lesson worth keeping: changing a callback's contract is a change to every caller.** The type system did not catch this one because `(chapters: Chapter[]) => void` accepts a `() => void` handler at the call site. Grep for callers when a prop's meaning changes, not just when its type does.
+
+**Known gap, flagged not fixed: `deleteBook` orphans storage objects.** Chapters cascade via the foreign key, but cover, audio and script files remain in their buckets — the action knows the book id, not the object paths, and no upload path exists yet to have recorded them. `deleteSeedData` does clean storage properly (it walks all three buckets and removes everything), so the leak is confined to single-book deletes. This should be closed when prompts 15–17 add real upload paths and the rows begin carrying storage paths worth deleting.
+
+**Prompt 15 (Cover upload)** replaced the Cover thumbnail card's local-preview-only behaviour with real direct-to-storage uploads. `app/actions/covers.ts` holds three actions: `createCoverUploadUrl` (mints a signed upload URL), `setBookCover` (persists the five `cover_*` columns), `removeBookCover` (nulls them and deletes the object). The card keeps its exact layout — dashed 2:3 frame, mono file name and size, `Replace`/`Remove`, constraint line, empty dropzone.
+
+**The file body never reaches the app server.** The browser gets a signed URL and uploads straight to Supabase Storage. `createCoverUploadUrl` validates type and size server-side (the browser check is a courtesy, this is the boundary) and confirms the book is visible to the caller before authorising a write under its id.
+
+**Upload uses a hand-rolled `XMLHttpRequest`, not `supabase.storage.uploadToSignedUrl`.** The SDK method works but exposes no progress events, and prompt 15 requires a determinate progress bar with a `<uploaded> / <total>` readout. XHR is the only browser API that reports upload progress. The endpoint shape (`/storage/v1/object/upload/sign/covers/<path>?token=<token>`) was **verified end to end against the live project** before shipping — minted a URL, PUT a real JPEG, got `HTTP 200` and `{"Key":"covers/..."}`, then deleted the probe. That verification mattered: a wrong URL shape would fail only at runtime, and typecheck/lint/build would all pass regardless.
+
+**PNG was kept, and the bucket widened to match.** Prompt 15 line 29 says "JPEG or WebP only", but the card's constraint line has read "JPG, PNG or WebP" since an explicit earlier product decision, and prompt 12 created the bucket with `image/jpeg` + `image/webp`. Three sources, two of them disagreeing with the UI. Resolved at the user's direction in favour of the product decision: migration `20260917000002` adds `image/png` to `allowed_mime_types`, so the copy, the client validation and the bucket now all agree. That agreement is the rule AGENTS.md actually protects (see the cover-fixture entry under Known implementation defects) — not "never widen the allowlist".
+
+**Covers defer during story creation**, the same pattern as the Manuscript card and Chapter composer. A cover path embeds the book id (`covers/<bookId>/<uuid>.<ext>`), which does not exist on `/books/new`, so the picked file is held with an object-URL preview and uploaded by `CoverThumbnailCardHandle.flush(newBookId)` from `CreateBookDialog`'s `onCreated` callback. The governing rule still holds — the object is written only after the parent row exists.
+
+**Replace ordering is upload → repoint row → delete old**, never delete-first. `setBookCover` takes the previous path and removes it only after the row points at the new object, so a failed delete orphans a file rather than leaving a book with no cover. A failed delete is logged and tolerated. Paths are immutable and `x-upsert` is never used: overwriting serves stale content through the CDN until propagation catches up.
+
+**Dimension mismatch warns, it does not reject.** Type and size rejections discard the file with a specific toast; a non-800×1200 image uploads with a muted line stating the detected dimensions. Operators source art from many places, and a visibly-wrong cover is fixable where an unuploadable one is not.
+
+**A raw network error was leaking straight to the operator.** A failed Book details Save once rendered the literal string `TypeError: fetch failed` under the "Book details" heading. Cause: `describeDbError` (`app/actions/types.ts`) only special-cased RLS and unique-constraint violations and returned every other error's `.message` verbatim. supabase-js/postgrest-js catches a failed `fetch()` internally and resolves with `{ error }` rather than throwing, so a transient connectivity blip's raw `TypeError` string flowed unmodified into `formError`. Not correlated with cover upload specifically — the call was inside `updateBook`'s own database update, so it could happen on any Save. Fixed with an `isNetworkError` shape-match (network failures never carry a Postgres error code, so they're matched on message pattern instead) returning "Couldn't reach the database. Check your connection and try again." Every action routes through this one function, so the fix covers `books.ts`, `chapters.ts`, `settings.ts` and `covers.ts` at once.
+
+**Related hardening gap, closed at the same time:** `handleSave` in `book-editor.tsx` had no `try/catch` around the action call. A thrown exception (rather than a returned `ActionResult`) would have left `pending` stuck `true` forever with nothing shown to the operator — a permanently-disabled Save button with no explanation. Now wrapped, with the same network-failure message on a genuine throw.
+
+**The `setState`-in-render warning was finally root-caused during this prompt's verification** — `form.reset()` in the save tail, fixed with `form.resetDefaultValues(values)` in both `book-editor.tsx` and `settings-screen.tsx`. Full mechanism, the expanded stack trace that revealed it, the three wrong diagnoses, and the ruled-out table live in **"Debugging `setState`-during-render (React + react-hook-form)"** under Debugging Playbooks. Not restated here — one canonical copy, so the two cannot drift apart.
+
+**A transient `ClerkRuntimeError: Failed to load Clerk JS` was investigated and found to be a real network condition, not a code defect.** Checked directly: clock skew 1.0s (fine), Clerk's JS CDN returned `HTTP 200` three times in a row from the dev machine. The same class of intermittent failure as the earlier `/touch` timeout (see `docs/AUTH-SETUP.md`), most likely the same IPv6-routing flakiness. **No code change was made for this** — there is nothing in this app's Clerk integration to fix, and reload is the correct remedy.
+
+**One real, narrow consequence of that was fixed: cover upload could hang forever with no visible failure.** When Clerk's session is unavailable (script load failure, or any other upstream stall), `createCoverUploadUrl`'s promise never resolves, so the upload progress bar sat at its initial `0.0 KB` state indefinitely — waiting on a promise that was never going to settle, rather than reaching the card's own `failed` state (which already existed and already renders correctly for other failure modes). Fixed in `cover-thumbnail-card.tsx`: `uploadFor` now wraps its whole body in `try/catch` and races both Server Action calls (`createCoverUploadUrl`, `setBookCover`) against a 20-second `withTimeout` helper, so a stalled upstream dependency reaches `{ status: "failed" }` with a specific message and the existing `Retry` action, instead of hanging. This is a general resilience fix — it protects against any stall (auth, network, server), not specifically against Clerk's load failure.
 
 **Open questions from prompt 21, flagged and not resolved in code:**
 

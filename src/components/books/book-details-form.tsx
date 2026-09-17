@@ -3,7 +3,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm, useFormContext, useWatch } from "react-hook-form";
 import { z } from "zod";
-import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -78,12 +77,16 @@ export function useBookDetailsForm(book: Book | null) {
 export function BookEditorSaveButton({
   isCreate,
   onCreateClick,
+  pending = false,
 }: {
   isCreate: boolean;
   onCreateClick?: () => void;
+  pending?: boolean;
 }) {
   const { formState } = useFormContext<BookDetailsValues>();
-  const disabled = isCreate ? !formState.isValid : !formState.isDirty || !formState.isValid;
+  const disabled = isCreate
+    ? !formState.isValid || pending
+    : !formState.isDirty || !formState.isValid || pending;
 
   if (isCreate) {
     return (
@@ -95,12 +98,20 @@ export function BookEditorSaveButton({
 
   return (
     <Button type="submit" form={BOOK_DETAILS_FORM_ID} disabled={disabled}>
-      Save
+      {pending ? "Saving…" : "Save"}
     </Button>
   );
 }
 
-export function BookDetailsForm({ isCreate }: { isCreate: boolean }) {
+export function BookDetailsForm({
+  isCreate,
+  onSave,
+  formError,
+}: {
+  isCreate: boolean;
+  onSave?: (values: BookDetailsValues) => void;
+  formError?: string | null;
+}) {
   const form = useFormContext<BookDetailsValues>();
   const shortDescription = useWatch({
     control: form.control,
@@ -108,16 +119,22 @@ export function BookDetailsForm({ isCreate }: { isCreate: boolean }) {
   });
   const synopsis = useWatch({ control: form.control, name: "synopsis" });
 
-  function onSubmit() {
+  function onSubmit(values: BookDetailsValues) {
     // Create mode submits via the Create Story dialog instead (see
     // book-editor.tsx) so an operator picks Draft or Publish there.
     if (isCreate) return;
-    toast.success("Book saved");
+    onSave?.(values);
   }
 
   return (
     <div className="card flex flex-col gap-6 p-6">
       <h2 className="card__header-title">Book details</h2>
+
+      {formError && (
+        <p className="field-group__helper field-group__helper--error">
+          {formError}
+        </p>
+      )}
 
       <form
         id={BOOK_DETAILS_FORM_ID}

@@ -2,7 +2,9 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Breadcrumbs } from "@/components/shell/breadcrumbs";
 import { BookEditor } from "@/components/books/book-editor";
-import { MOCK_BOOKS, MOCK_CHAPTERS } from "@/data/mock-catalog";
+import { QueryErrorCard } from "@/components/shell/query-error-card";
+import { serverSupabaseWithSettings } from "@/lib/server-supabase";
+import { getBook, getChapters } from "@/lib/queries";
 
 export default async function BookEditorPage({
   params,
@@ -10,7 +12,27 @@ export default async function BookEditorPage({
   params: Promise<{ bookId: string }>;
 }) {
   const { bookId } = await params;
-  const book = MOCK_BOOKS.find((b) => b.id === bookId);
+  const { client, settings } = await serverSupabaseWithSettings();
+
+  const bookResult = await getBook(client, bookId, settings.publicCdnDomain);
+
+  // A failed read and a missing book are different outcomes and must look
+  // different to the operator.
+  if (!bookResult.ok) {
+    return (
+      <div className="flex flex-col gap-6">
+        <Breadcrumbs
+          items={[{ label: "Books", href: "/books" }, { label: "Error" }]}
+        />
+        <QueryErrorCard
+          message={bookResult.error}
+          retryHref={`/books/${bookId}`}
+        />
+      </div>
+    );
+  }
+
+  const book = bookResult.data;
 
   if (!book) {
     return (
@@ -31,7 +53,27 @@ export default async function BookEditorPage({
     );
   }
 
-  const chapters = MOCK_CHAPTERS.filter((c) => c.bookId === book.id);
+  const chaptersResult = await getChapters(
+    client,
+    book.id,
+    settings.publicCdnDomain,
+  );
 
-  return <BookEditor mode={{ kind: "edit", book, chapters }} />;
+  if (!chaptersResult.ok) {
+    return (
+      <div className="flex flex-col gap-6">
+        <Breadcrumbs
+          items={[{ label: "Books", href: "/books" }, { label: book.title }]}
+        />
+        <QueryErrorCard
+          message={chaptersResult.error}
+          retryHref={`/books/${bookId}`}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <BookEditor mode={{ kind: "edit", book, chapters: chaptersResult.data }} />
+  );
 }

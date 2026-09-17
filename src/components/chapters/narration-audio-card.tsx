@@ -5,6 +5,14 @@ import { Button } from "@/components/ui/button";
 import { SETTINGS_DEFAULTS } from "@/data/settings-defaults";
 import { formatBytes, formatDuration } from "@/lib/catalog";
 
+// NOTE: this card still reads the accepted-format list and max size from the
+// SETTINGS_DEFAULTS constants rather than the app_settings row. Threading real
+// settings down would mean adding a prop to this component and to every
+// composer that renders it, and prompt 13 forbids changing component structure.
+// Flagged rather than silently diverged: an operator who edits the accepted
+// formats in Settings will not see this card's constraint line change until
+// that prop is added. See AGENTS.md.
+
 export type NarrationAudioPreview = {
   url: string;
   fileName: string;

@@ -1,3 +1,22 @@
+// Application constants, not configuration.
+//
+// The *values* on this screen (bucket name, CDN domain, max audio size, the
+// accepted-format lists, publishing defaults) now live in the `app_settings`
+// table and are read via `getAppSettings` — see lib/queries.ts.
+//
+// What remains here, and why:
+//   - STORAGE_PROVIDER_OPTIONS / SELECTABLE_*_FORMATS: the option lists a
+//     select or chip control can offer. These are choices the application
+//     supports, not values an operator has configured.
+//   - TEAM_ROLE_OPTIONS / TeamRole: role labels. Roles come from Clerk
+//     publicMetadata; this maps them to display strings.
+//   - SETTINGS_TEAM: placeholder roster. The Team card reads from Clerk once a
+//     real member list exists; there is no `team_members` table by design.
+//   - SETTINGS_DEFAULTS: the fallback used by getAppSettings when the
+//     app_settings table is empty — a fresh database has no settings row, and
+//     prompt 12 forbids seeding one in a migration. Not read by any component
+//     directly except NarrationAudioCard (see its own note).
+
 import type { ChapterAccess, Maturity } from "@/types/catalog";
 
 export type StorageProviderOption = {

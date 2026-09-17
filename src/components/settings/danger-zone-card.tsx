@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { toast } from "sonner";
+import { deleteSeedData } from "@/app/actions/settings";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -19,20 +20,34 @@ const CONFIRM_PHRASE = "delete seed data";
 export function DangerZoneCard() {
   const [open, setOpen] = useState(false);
   const [confirmText, setConfirmText] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
 
-  const canConfirm = confirmText.trim() === CONFIRM_PHRASE;
+  const canConfirm = confirmText.trim() === CONFIRM_PHRASE && !pending;
 
   function handleOpenChange(next: boolean) {
+    if (pending) return;
     setOpen(next);
-    if (!next) setConfirmText("");
+    if (!next) {
+      setConfirmText("");
+      setFormError(null);
+    }
   }
 
   function handleConfirm() {
-    // Nothing is deleted — there is no backend yet (prompts 11-18).
-    toast.success(
-      "Validated. Seed deletion isn't wired to a backend yet — nothing was removed.",
-    );
-    handleOpenChange(false);
+    setFormError(null);
+    startTransition(async () => {
+      const result = await deleteSeedData();
+      if (!result.ok) {
+        setFormError(result.formError);
+        return;
+      }
+      const { booksDeleted, filesDeleted } = result.data;
+      toast.success(
+        `Deleted ${booksDeleted} ${booksDeleted === 1 ? "book" : "books"} and ${filesDeleted} ${filesDeleted === 1 ? "file" : "files"}.`,
+      );
+      handleOpenChange(false);
+    });
   }
 
   return (
@@ -78,11 +93,21 @@ export function DangerZoneCard() {
               value={confirmText}
               onChange={(event) => setConfirmText(event.target.value)}
               autoComplete="off"
+              disabled={pending}
             />
+            {formError && (
+              <p className="field-group__helper field-group__helper--error">
+                {formError}
+              </p>
+            )}
           </div>
 
           <DialogFooter>
-            <Button variant="muted" onClick={() => handleOpenChange(false)}>
+            <Button
+              variant="muted"
+              disabled={pending}
+              onClick={() => handleOpenChange(false)}
+            >
               Cancel
             </Button>
             <Button
@@ -90,7 +115,7 @@ export function DangerZoneCard() {
               disabled={!canConfirm}
               onClick={handleConfirm}
             >
-              Delete seed data
+              {pending ? "Deleting…" : "Delete seed data"}
             </Button>
           </DialogFooter>
         </DialogContent>

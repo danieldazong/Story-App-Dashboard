@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useForm, useFormContext } from "react-hook-form";
 import { useAuth, useUser } from "@clerk/nextjs";
 import { z } from "zod";
-import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -32,10 +31,10 @@ import { MATURITY_LEVELS } from "@/data/maturity-levels";
 import {
   SELECTABLE_AUDIO_FORMATS,
   SELECTABLE_SCRIPT_FORMATS,
-  SETTINGS_DEFAULTS,
   STORAGE_PROVIDER_OPTIONS,
   TEAM_ROLE_OPTIONS,
 } from "@/data/settings-defaults";
+import type { AppSettings } from "@/lib/queries";
 
 export const SETTINGS_FORM_ID = "settings-form";
 
@@ -63,36 +62,39 @@ const settingsSchema = z.object({
 
 export type SettingsValues = z.infer<typeof settingsSchema>;
 
-function defaultValues(): SettingsValues {
+// Values come from the app_settings row, read server-side and passed in as a
+// prop. When that table is empty getAppSettings falls back to the constants in
+// data/settings-defaults.ts, so this component never needs to know which.
+function defaultValues(settings: AppSettings): SettingsValues {
   return {
-    storageProvider: SETTINGS_DEFAULTS.storageProvider,
-    bucketName: SETTINGS_DEFAULTS.bucketName,
-    publicCdnDomain: SETTINGS_DEFAULTS.publicCdnDomain,
-    maxAudioSizeMb: SETTINGS_DEFAULTS.maxAudioSizeMb,
-    acceptedAudioFormats: [...SETTINGS_DEFAULTS.acceptedAudioFormats],
-    acceptedScriptFormats: [...SETTINGS_DEFAULTS.acceptedScriptFormats],
-    detectDurationAutomatically: SETTINGS_DEFAULTS.detectDurationAutomatically,
-    defaultChapterAccess: SETTINGS_DEFAULTS.defaultChapterAccess,
-    freeChaptersAtStart: SETTINGS_DEFAULTS.freeChaptersAtStart,
-    defaultMaturity: SETTINGS_DEFAULTS.defaultMaturity,
+    storageProvider: settings.storageProvider,
+    bucketName: settings.bucketName,
+    publicCdnDomain: settings.publicCdnDomain,
+    maxAudioSizeMb: settings.maxAudioSizeMb,
+    acceptedAudioFormats: [...settings.acceptedAudioFormats],
+    acceptedScriptFormats: [...settings.acceptedScriptFormats],
+    detectDurationAutomatically: settings.detectDurationAutomatically,
+    defaultChapterAccess: settings.defaultChapterAccess,
+    freeChaptersAtStart: settings.freeChaptersAtStart,
+    defaultMaturity: settings.defaultMaturity,
   };
 }
 
-export function useSettingsForm() {
+export function useSettingsForm(settings: AppSettings) {
   return useForm<SettingsValues>({
     resolver: zodResolver(settingsSchema),
-    defaultValues: defaultValues(),
+    defaultValues: defaultValues(settings),
     mode: "onChange",
   });
 }
 
-export function SettingsSaveButton() {
+export function SettingsSaveButton({ pending = false }: { pending?: boolean }) {
   const { formState } = useFormContext<SettingsValues>();
-  const disabled = !formState.isDirty || !formState.isValid;
+  const disabled = !formState.isDirty || !formState.isValid || pending;
 
   return (
     <Button type="submit" form={SETTINGS_FORM_ID} disabled={disabled}>
-      Save changes
+      {pending ? "Saving…" : "Save changes"}
     </Button>
   );
 }
@@ -467,15 +469,17 @@ function PublishingDefaultsCard() {
   );
 }
 
-export function SettingsForm() {
+export function SettingsForm({
+  onSave,
+  formError,
+}: {
+  onSave?: (values: SettingsValues) => void;
+  formError?: string | null;
+}) {
   const form = useFormContext<SettingsValues>();
 
-  function onSubmit() {
-    // No settings table exists yet (Supabase lands in prompts 11-18).
-    toast.success(
-      "Validated. Settings aren't wired to a backend yet — nothing was saved.",
-    );
-    form.reset(form.getValues());
+  function onSubmit(values: SettingsValues) {
+    onSave?.(values);
   }
 
   return (
@@ -484,6 +488,11 @@ export function SettingsForm() {
       onSubmit={form.handleSubmit(onSubmit)}
       className="flex max-w-[720px] flex-col gap-6"
     >
+      {formError && (
+        <p className="field-group__helper field-group__helper--error">
+          {formError}
+        </p>
+      )}
       <AccountCard />
       <StorageCard />
       <UploadDefaultsCard />

@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { FormProvider, useWatch } from "react-hook-form";
 import { PageHeader } from "@/components/shell/page-header";
 import {
@@ -9,8 +11,14 @@ import {
   useBookDetailsForm,
   type BookDetailsValues,
 } from "@/components/books/book-details-form";
-import { CoverThumbnailCard } from "@/components/books/cover-thumbnail-card";
-import { ManuscriptCard } from "@/components/books/manuscript-card";
+import {
+  CoverThumbnailCard,
+  type CoverThumbnailCardHandle,
+} from "@/components/books/cover-thumbnail-card";
+import {
+  ManuscriptCard,
+  type ManuscriptCardHandle,
+} from "@/components/books/manuscript-card";
 import {
   ChapterComposer,
   type ChapterComposerHandle,
@@ -20,7 +28,7 @@ import {
   CreateBookDialog,
   type CreateBookDialogHandle,
 } from "@/components/books/create-book-dialog";
-import { writeLocalChapters } from "@/lib/local-chapters";
+import { updateBook } from "@/app/actions/books";
 import type { Book, Chapter } from "@/types/catalog";
 
 export type BookEditorMode =
@@ -36,7 +44,7 @@ function ComposerRow({
   bookId: string;
   chapters: Chapter[];
   composerRef: React.Ref<ChapterComposerHandle>;
-  onCreate: (chapter: Chapter) => void;
+  onCreate: () => void;
 }) {
   const defaultChapterAccess = useWatch<BookDetailsValues>({
     name: "defaultChapterAccess",
@@ -60,63 +68,89 @@ function ComposerRow({
 }
 
 export function BookEditor({ mode }: { mode: BookEditorMode }) {
+  const router = useRouter();
   const isCreate = mode.kind === "create";
   const book = mode.kind === "edit" ? mode.book : null;
-  const seededChapterIds = new Set(
-    mode.kind === "edit" ? mode.chapters.map((chapter) => chapter.id) : [],
-  );
 
-  const [chapters, setChapters] = useState<Chapter[]>(
-    mode.kind === "edit" ? mode.chapters : [],
-  );
+  // Chapters come from the database via the page's Server Component. There is
+  // no local chapter state any more — a mutation refreshes the route and the
+  // server sends the new rows down.
+  const chapters = mode.kind === "edit" ? mode.chapters : [];
 
   const form = useBookDetailsForm(book);
   const title = book?.title ?? "New Story";
   const composerRef = useRef<ChapterComposerHandle>(null);
+  const manuscriptRef = useRef<ManuscriptCardHandle>(null);
+  const coverRef = useRef<CoverThumbnailCardHandle>(null);
   const createDialogRef = useRef<CreateBookDialogHandle>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [pending, setSaving] = useState(false);
 
-  // Mirror chapters created this session (composer / Manuscript import — not
-  // part of the seeded mock data) into sessionStorage, keyed by book id, so
-  // the chapter editor page can find them after a navigation. No backend
-  // exists yet; this is a same-tab convenience, not persistence.
-  useEffect(() => {
+  async function handleSave(values: BookDetailsValues) {
     if (!book) return;
-    const localOnly = chapters.filter(
-      (chapter) => !seededChapterIds.has(chapter.id),
-    );
-    writeLocalChapters(book.id, localOnly);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [book, chapters]);
+    setFormError(null);
+    setSaving(true);
 
-  function handleCreateChapter(chapter: Chapter) {
-    setChapters((current) =>
-      [...current, chapter].sort((a, b) => a.number - b.number),
-    );
-  }
+    let result;
+    try {
+      result = await updateBook(book.id, {
+        title: values.title,
+        author: values.author,
+        shortDescription: values.shortDescription,
+        synopsis: values.synopsis,
+        genres: values.genres,
+        maturity: values.maturity,
+        status: values.status,
+        defaultChapterAccess: values.defaultChapterAccess,
+      });
+    } catch {
+      // A thrown exception (rather than a returned ActionResult) would
+      // otherwise leave `pending` stuck true forever with nothing shown —
+      // see AGENTS.md, prompt 14 notes.
+      setSaving(false);
+      setFormError(
+        "Couldn't reach the database. Check your connection and try again.",
+      );
+      return;
+    }
 
-  function handleImportChapters(imported: Chapter[]) {
-    setChapters((current) =>
-      [...current, ...imported].sort((a, b) => a.number - b.number),
-    );
-  }
+    setSaving(false);
 
-  function handleToggleAccess(chapterId: string) {
-    setChapters((current) =>
-      current.map((chapter) =>
-        chapter.id === chapterId
-          ? {
-              ...chapter,
-              access: chapter.access === "free" ? "locked" : "free",
-            }
-          : chapter,
-      ),
-    );
-  }
+    if (!result.ok) {
+      setFormError(result.formError);
+      for (const [field, message] of Object.entries(result.fieldErrors ?? {})) {
+        form.setError(field as keyof BookDetailsValues, { message });
+      }
+      return;
+    }
 
-  function handleDeleteChapter(chapterId: string) {
-    setChapters((current) =>
-      current.filter((chapter) => chapter.id !== chapterId),
-    );
+    toast.success("Book saved");
+
+    // Move the dirty baseline to what was just saved, so Save disables again.
+    //
+    // resetDefaultValues(), NOT reset(). reset() tears down and re-registers
+    // every field, and each re-registration re-runs the schema and notifies
+    // react-hook-form's shared subject — which synchronously calls setState in
+    // sibling Controllers' subscribers. When that lands during a render pass it
+    // produces "Cannot update a component (BookEditor) while rendering a
+    // different component (Controller)". Deferring reset() to a microtask does
+    // not help: the stack trace showed React flushing that same cascade inside
+    // the microtask (processRootScheduleInMicrotask), so it only moved which
+    // tick the collision happened in.
+    //
+    // resetDefaultValues() is purpose-built for exactly this case — RHF's own
+    // docs describe it as "after a successful submission, update defaults to the
+    // submitted values so that dirtyFields/isDirty reflect changes made after
+    // that point". It recomputes dirty state WITHOUT touching user values, so
+    // nothing re-registers and the schema never re-runs. No cascade, no warning.
+    form.resetDefaultValues(values);
+
+    // No router.refresh() here. updateBook() already called revalidatePath for
+    // this route, and a Server Action's response carries the refreshed RSC
+    // payload with it — React applies it automatically. Calling refresh() as
+    // well fired a SECOND full round trip for data already in flight, which on
+    // this database (~450ms per query) cost ~3s of dead time per save.
+    // See AGENTS.md, Performance Rules.
   }
 
   return (
@@ -132,22 +166,43 @@ export function BookEditor({ mode }: { mode: BookEditorMode }) {
           action={
             <BookEditorSaveButton
               isCreate={isCreate}
+              pending={pending}
               onCreateClick={() => createDialogRef.current?.open()}
             />
           }
         />
-        {isCreate && <CreateBookDialog ref={createDialogRef} />}
+        {isCreate && (
+          <CreateBookDialog
+            ref={createDialogRef}
+            onCreated={async (newBookId) => {
+              // Flush anything composed before the story existed, so work done
+              // during creation is not thrown away on navigation.
+              await coverRef.current?.flush(newBookId);
+              await manuscriptRef.current?.flush(newBookId);
+              await composerRef.current?.flush(newBookId);
+            }}
+          />
+        )}
 
         <div className="grid grid-cols-3 gap-6">
           <div className="col-span-2">
-            <BookDetailsForm isCreate={isCreate} />
+            <BookDetailsForm
+              isCreate={isCreate}
+              onSave={handleSave}
+              formError={formError}
+            />
           </div>
           <div className="col-span-1 flex flex-col gap-6">
-            <CoverThumbnailCard cover={book?.cover ?? { state: "missing" }} />
+            <CoverThumbnailCard
+              ref={coverRef}
+              cover={book?.cover ?? { state: "missing" }}
+              bookId={book?.id ?? ""}
+            />
             <ManuscriptCard
+              ref={manuscriptRef}
               bookId={book?.id ?? ""}
               existingNumbers={chapters.map((chapter) => chapter.number)}
-              onImport={handleImportChapters}
+              onImport={() => router.refresh()}
             />
           </div>
         </div>
@@ -156,15 +211,14 @@ export function BookEditor({ mode }: { mode: BookEditorMode }) {
           bookId={book?.id ?? ""}
           chapters={chapters}
           composerRef={composerRef}
-          onCreate={handleCreateChapter}
+          onCreate={() => router.refresh()}
         />
 
         <ChaptersCard
           bookId={book?.id ?? ""}
           chapters={chapters}
           onAddChapter={() => composerRef.current?.focusTitle()}
-          onToggleAccess={handleToggleAccess}
-          onDeleteChapter={handleDeleteChapter}
+          onChanged={() => router.refresh()}
         />
       </div>
     </FormProvider>

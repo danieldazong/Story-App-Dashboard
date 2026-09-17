@@ -2,8 +2,9 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Breadcrumbs } from "@/components/shell/breadcrumbs";
 import { ChapterEditor } from "@/components/chapters/chapter-editor";
-import { ChapterEditorResolver } from "@/components/chapters/chapter-editor-resolver";
-import { MOCK_BOOKS, MOCK_CHAPTERS } from "@/data/mock-catalog";
+import { QueryErrorCard } from "@/components/shell/query-error-card";
+import { serverSupabaseWithSettings } from "@/lib/server-supabase";
+import { getBook, getChapter, getChapterNeighbours } from "@/lib/queries";
 
 export default async function ChapterEditorPage({
   params,
@@ -11,8 +12,26 @@ export default async function ChapterEditorPage({
   params: Promise<{ bookId: string; chapterNumber: string }>;
 }) {
   const { bookId, chapterNumber } = await params;
-  const book = MOCK_BOOKS.find((b) => b.id === bookId);
   const number = Number(chapterNumber);
+  const { client, settings } = await serverSupabaseWithSettings();
+
+  const bookResult = await getBook(client, bookId, settings.publicCdnDomain);
+
+  if (!bookResult.ok) {
+    return (
+      <div className="flex flex-col gap-6">
+        <Breadcrumbs
+          items={[{ label: "Books", href: "/books" }, { label: "Error" }]}
+        />
+        <QueryErrorCard
+          message={bookResult.error}
+          retryHref={`/books/${bookId}/chapters/${chapterNumber}`}
+        />
+      </div>
+    );
+  }
+
+  const book = bookResult.data;
 
   if (!book) {
     return (
@@ -35,49 +54,71 @@ export default async function ChapterEditorPage({
     );
   }
 
-  const bookChapters = MOCK_CHAPTERS.filter((c) => c.bookId === bookId);
-  const chapter = bookChapters.find((c) => c.number === number);
+  const chapterResult = await getChapter(
+    client,
+    book.id,
+    number,
+    settings.publicCdnDomain,
+  );
 
-  // Not in the seeded mock data — it may still be a chapter created this
-  // session via the composer/Manuscript import, which only lives in
-  // sessionStorage (see lib/local-chapters.ts). That's a client-only check,
-  // so hand off to a small Client Component rather than declaring "not
-  // found" here.
-  if (!chapter) {
+  if (!chapterResult.ok) {
     return (
-      <ChapterEditorResolver
-        bookId={book.id}
-        bookTitle={book.title}
-        number={number}
-        seededChapterNumbers={bookChapters.map((c) => c.number)}
-      />
+      <div className="flex flex-col gap-6">
+        <Breadcrumbs
+          items={[
+            { label: "Books", href: "/books" },
+            { label: book.title, href: `/books/${book.id}` },
+            { label: "Error" },
+          ]}
+        />
+        <QueryErrorCard
+          message={chapterResult.error}
+          retryHref={`/books/${bookId}/chapters/${chapterNumber}`}
+        />
+      </div>
     );
   }
 
-  const bookChapterNumbers = bookChapters
-    .map((c) => c.number)
-    .sort((a, b) => a - b);
-  const currentIndex = bookChapterNumbers.indexOf(number);
-  const previousNumber =
-    currentIndex > 0 ? bookChapterNumbers[currentIndex - 1] : null;
-  const nextNumber =
-    currentIndex < bookChapterNumbers.length - 1
-      ? bookChapterNumbers[currentIndex + 1]
-      : null;
+  // Chapters are persisted now (prompt 14), so a miss here means the chapter
+  // genuinely does not exist — there is no local-only state to fall back to.
+  if (!chapterResult.data) {
+    return (
+      <div className="flex flex-col gap-6">
+        <Breadcrumbs
+          items={[
+            { label: "Books", href: "/books" },
+            { label: book.title, href: `/books/${book.id}` },
+            { label: "Not found" },
+          ]}
+        />
+        <div className="card flex flex-col gap-3 p-6">
+          <h1 className="text-page-title">Chapter not found</h1>
+          <p className="card__sub-line">
+            This chapter doesn&apos;t exist or may have been removed.
+          </p>
+          <div>
+            <Button asChild variant="outline">
+              <Link href={`/books/${book.id}`}>Back to book</Link>
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const neighbours = await getChapterNeighbours(client, book.id, number);
+  const previous = neighbours.ok ? neighbours.data.previous : null;
+  const next = neighbours.ok ? neighbours.data.next : null;
 
   return (
     <ChapterEditor
       bookId={book.id}
       bookTitle={book.title}
-      chapter={chapter}
+      chapter={chapterResult.data}
       previousHref={
-        previousNumber !== null
-          ? `/books/${book.id}/chapters/${previousNumber}`
-          : null
+        previous !== null ? `/books/${book.id}/chapters/${previous}` : null
       }
-      nextHref={
-        nextNumber !== null ? `/books/${book.id}/chapters/${nextNumber}` : null
-      }
+      nextHref={next !== null ? `/books/${book.id}/chapters/${next}` : null}
     />
   );
 }

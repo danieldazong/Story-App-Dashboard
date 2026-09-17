@@ -152,6 +152,7 @@ export type Database = {
           cover_size_bytes: number | null
           cover_width: number | null
           created_at: string
+          default_chapter_access: Database["public"]["Enums"]["chapter_access"]
           genres: string[]
           id: string
           maturity: Database["public"]["Enums"]["maturity"]
@@ -169,6 +170,7 @@ export type Database = {
           cover_size_bytes?: number | null
           cover_width?: number | null
           created_at?: string
+          default_chapter_access?: Database["public"]["Enums"]["chapter_access"]
           genres?: string[]
           id?: string
           maturity?: Database["public"]["Enums"]["maturity"]
@@ -186,6 +188,7 @@ export type Database = {
           cover_size_bytes?: number | null
           cover_width?: number | null
           created_at?: string
+          default_chapter_access?: Database["public"]["Enums"]["chapter_access"]
           genres?: string[]
           id?: string
           maturity?: Database["public"]["Enums"]["maturity"]
