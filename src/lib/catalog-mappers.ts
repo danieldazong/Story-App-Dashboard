@@ -50,6 +50,9 @@ export function toScriptAsset(row: ChapterRow): ScriptAsset {
   return {
     state: "ready",
     fileName: row.script_file_name ?? "script.txt",
+    // Null for rows that predate prompt 17 — text was extracted client-side
+    // and the original was never stored. See the comment on ScriptAsset.
+    path: row.script_path,
     text: row.script_text,
     wordCount: countWords(row.script_text),
   };

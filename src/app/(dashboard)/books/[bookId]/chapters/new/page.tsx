@@ -89,6 +89,7 @@ export default async function NewChapterPage({
       existingNumbers={bookChapters.map((c) => c.number)}
       acceptedAudioFormats={settings.acceptedAudioFormats}
       maxAudioSizeMb={settings.maxAudioSizeMb}
+      acceptedScriptFormats={settings.acceptedScriptFormats}
     />
   );
 }

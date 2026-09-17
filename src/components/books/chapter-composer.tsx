@@ -66,6 +66,8 @@ export const ChapterComposer = forwardRef<
     /** From app_settings, for the Narration card's constraint line. */
     acceptedAudioFormats: string[];
     maxAudioSizeMb: number;
+    /** From app_settings, for the Chapter script card. */
+    acceptedScriptFormats: string[];
   }
 >(function ChapterComposer(
   {
@@ -76,6 +78,7 @@ export const ChapterComposer = forwardRef<
     onCreate,
     acceptedAudioFormats,
     maxAudioSizeMb,
+    acceptedScriptFormats,
   },
   ref,
 ) {
@@ -238,6 +241,7 @@ export const ChapterComposer = forwardRef<
           }
           fileName={scriptFileName}
           onFileNameChange={setScriptFileName}
+          acceptedFormats={acceptedScriptFormats}
         />
       </div>
 

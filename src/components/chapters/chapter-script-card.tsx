@@ -6,18 +6,28 @@ import { Textarea } from "@/components/ui/textarea";
 import { countWords } from "@/lib/catalog";
 import { extractDocxText } from "@/lib/docx";
 
-const TEXT_EXTENSIONS = [".txt", ".md"];
-
 export function ChapterScriptCard({
   scriptText,
   onScriptTextChange,
   fileName,
   onFileNameChange,
+  acceptedFormats,
 }: {
   scriptText: string;
   onScriptTextChange: (value: string) => void;
   fileName: string | null;
   onFileNameChange: (fileName: string | null) => void;
+  /**
+   * From `app_settings`, never constants.
+   *
+   * Extraction here stays client-side — this card runs before a chapter row
+   * exists, so there is nothing to upload a file against (prompt 17's scope
+   * decisions). But WHERE parsing runs is a separate concern from WHICH
+   * formats are accepted: leaving the list hardcoded recreates the disagreement
+   * between the card, app_settings and the bucket that prompt 16 fixed for
+   * audio.
+   */
+  acceptedFormats: string[];
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [unreadableFile, setUnreadableFile] = useState<string | null>(null);
@@ -46,8 +56,11 @@ export function ChapterScriptCard({
       return;
     }
 
-    const isTextFile = TEXT_EXTENSIONS.some((ext) => name.endsWith(ext));
-    if (!isTextFile) {
+    // `.docx` is handled above; everything else accepted is read as plain text.
+    const isPlainText = acceptedFormats
+      .filter((ext) => ext.toLowerCase() !== ".docx")
+      .some((ext) => name.endsWith(ext.toLowerCase()));
+    if (!isPlainText) {
       setUnreadableFile(file.name);
       return;
     }
@@ -70,7 +83,7 @@ export function ChapterScriptCard({
       <input
         ref={fileInputRef}
         type="file"
-        accept=".docx,.txt,.md"
+        accept={acceptedFormats.join(",")}
         className="hidden"
         onChange={handleFileChange}
       />
@@ -79,7 +92,8 @@ export function ChapterScriptCard({
         <p className="text-helper text-muted">
           {extracting
             ? "Reading file…"
-            : (fileName ?? "DOCX, TXT or MD · or paste prose below")}
+            : (fileName ??
+              `${acceptedFormats.map((f) => f.replace(".", "").toUpperCase()).join(", ")} · or paste prose below`)}
         </p>
         <Button
           variant="outline"

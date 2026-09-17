@@ -12,6 +12,7 @@ export default async function NewBookPage() {
       mode={{ kind: "create" }}
       acceptedAudioFormats={settings.acceptedAudioFormats}
       maxAudioSizeMb={settings.maxAudioSizeMb}
+      acceptedScriptFormats={settings.acceptedScriptFormats}
     />
   );
 }

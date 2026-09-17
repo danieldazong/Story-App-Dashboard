@@ -54,6 +54,16 @@ export type ScriptAsset =
   | {
       state: "ready";
       fileName: NonNullable<ChapterRow["script_file_name"]>;
+      /**
+       * The stored original file, or null.
+       *
+       * Null with text present is a legitimate permanent state, not a broken
+       * one: chapters created before prompt 17 have extracted text whose source
+       * file was never kept, and cannot be back-filled. The card shows
+       * `Choose file` rather than `Replace file` for those — there is nothing
+       * to replace.
+       */
+      path: ChapterRow["script_path"];
       text: NonNullable<ChapterRow["script_text"]>;
       // Derived from `script_text` at render time via `countWords`, never
       // persisted — there is deliberately no word_count column.

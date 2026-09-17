@@ -14,9 +14,22 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { countWords } from "@/lib/catalog";
-import { extractDocxText } from "@/lib/docx";
+import { countWords, formatBytes } from "@/lib/catalog";
+import {
+  createScriptUploadUrl,
+  discardScriptUpload,
+  extractAndSetChapterScript,
+  removeChapterScript,
+} from "@/app/actions/scripts";
 import {
   hasMark,
   parseScript,
@@ -24,23 +37,75 @@ import {
   type Mark,
 } from "@/lib/script-markup";
 
-const TEXT_EXTENSIONS = [".txt", ".md"];
+const REQUEST_TIMEOUT_MS = 20_000;
+
+/**
+ * Races a Server Action against a timeout, so a stalled upstream dependency
+ * reaches the card's `failed` state instead of leaving it mid-upload forever.
+ * Same guard as the cover and audio cards.
+ */
+function withTimeout<T>(promise: Promise<T>, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), REQUEST_TIMEOUT_MS);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+type UploadState =
+  | { status: "idle" }
+  | { status: "uploading"; uploadedBytes: number; totalBytes: number }
+  | { status: "extracting" }
+  | { status: "removing" }
+  | { status: "failed"; message: string };
 
 export function ChapterEditorScriptCard({
   scriptText,
   onScriptTextChange,
   fileName,
-  onFileChange,
+  scriptPath,
+  bookId,
+  chapterId,
+  chapterNumber,
+  chapterTitle,
+  onUploaded,
+  acceptedFormats,
 }: {
   scriptText: string;
   onScriptTextChange: (value: string) => void;
   fileName: string | null;
-  onFileChange: (fileName: string | null) => void;
+  /**
+   * The stored object's path, or null.
+   *
+   * Null with a fileName present is a legitimate permanent state: 38 chapters
+   * predate prompt 17 and have extracted text whose source file was never
+   * kept. Those rows show `Choose file` rather than `Replace file` — there is
+   * nothing to replace — and must not read as broken.
+   */
+  scriptPath: string | null;
+  bookId: string;
+  chapterId: string;
+  chapterNumber: number;
+  /** Used server-side to strip a leading heading that merely repeats it. */
+  chapterTitle: string;
+  /** Fired after the row has been repointed, so the page can refresh. */
+  onUploaded: () => void;
+  /** From app_settings — never constants. See AGENTS.md, prompt 16 notes. */
+  acceptedFormats: string[];
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const [unreadableFile, setUnreadableFile] = useState<string | null>(null);
-  const [extracting, setExtracting] = useState(false);
+  const [state, setState] = useState<UploadState>({ status: "idle" });
+  const [confirmingReplace, setConfirmingReplace] = useState(false);
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
   // Mirrors the textarea's caret so the toolbar can show which marks the
   // current selection already carries. Kept in state rather than read on each
   // render because a ref change does not re-render, and the buttons have to
@@ -67,37 +132,156 @@ export function ChapterEditorScriptCard({
     setSelection({ start: target.selectionStart, end: target.selectionEnd });
   }
 
-  async function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+  const busy =
+    state.status === "uploading" ||
+    state.status === "extracting" ||
+    state.status === "removing";
+
+  /**
+   * Upload the original file, then extract server-side.
+   *
+   * Extraction deliberately does NOT happen here. A browser can send anything
+   * to updateChapter, so if the client decided what `script_text` became, the
+   * normalisation rules and the empty-text rejection would be conventions
+   * rather than a boundary. See app/actions/scripts.ts.
+   */
+  async function uploadAndExtract(file: File) {
+    // Client checks are a courtesy; createScriptUploadUrl is the boundary.
+    const extension = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
+    if (!acceptedFormats.map((f) => f.toLowerCase()).includes(extension)) {
+      setState({
+        status: "failed",
+        message: `Scripts must be ${acceptedFormats.join(" or ")}. This file is ${extension || "an unrecognised type"}.`,
+      });
+      return;
+    }
+
+    setState({ status: "uploading", uploadedBytes: 0, totalBytes: file.size });
+
+    let signed;
+    try {
+      signed = await withTimeout(
+        createScriptUploadUrl({
+          bookId,
+          chapterId,
+          fileName: file.name,
+          sizeBytes: file.size,
+        }),
+        "Timed out starting the upload. Check your connection and try again.",
+      );
+    } catch (error) {
+      setState({
+        status: "failed",
+        message:
+          error instanceof Error ? error.message : "Couldn't start the upload.",
+      });
+      return;
+    }
+
+    if (!signed.ok) {
+      setState({ status: "failed", message: signed.formError });
+      return;
+    }
+
+    const { path, token, contentType } = signed.data;
+    const endpoint = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/upload/sign/scripts/${path}?token=${token}`;
+
+    // XHR rather than fetch: only XHR reports upload progress. Verified against
+    // the live project before this was built — mint, PUT, HTTP 200.
+    const uploaded = await new Promise<{ ok: boolean; message?: string }>(
+      (resolve) => {
+        const request = new XMLHttpRequest();
+        request.open("PUT", endpoint, true);
+        request.setRequestHeader("Content-Type", contentType);
+        request.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            setState({
+              status: "uploading",
+              uploadedBytes: event.loaded,
+              totalBytes: file.size,
+            });
+          }
+        };
+        request.onload = () =>
+          resolve(
+            request.status >= 200 && request.status < 300
+              ? { ok: true }
+              : request.status === 400 || request.status === 403
+                ? { ok: false, message: "The upload link expired. Try again." }
+                : {
+                    ok: false,
+                    message: `Storage rejected the upload (${request.status}).`,
+                  },
+          );
+        request.onerror = () =>
+          resolve({ ok: false, message: "Network error during upload." });
+        request.send(file);
+      },
+    );
+
+    if (!uploaded.ok) {
+      setState({ status: "failed", message: uploaded.message ?? "Upload failed." });
+      void discardScriptUpload(path);
+      return;
+    }
+
+    setState({ status: "extracting" });
+
+    let extracted;
+    try {
+      extracted = await withTimeout(
+        extractAndSetChapterScript({
+          bookId,
+          chapterId,
+          chapterNumber,
+          chapterTitle,
+          path,
+          fileName: file.name,
+          previousPath: scriptPath,
+        }),
+        "Timed out reading the file. It uploaded — try Replace to confirm it saved.",
+      );
+    } catch (error) {
+      setState({
+        status: "failed",
+        message:
+          error instanceof Error ? error.message : "Couldn't read the file.",
+      });
+      return;
+    }
+
+    if (!extracted.ok) {
+      setState({ status: "failed", message: extracted.formError });
+      return;
+    }
+
+    setState({ status: "idle" });
+    // The row is the truth now. Refresh rather than pushing text back through
+    // react-hook-form, which would mark the form dirty over work already saved
+    // — the same reason narration stopped feeding `audioDirty`.
+    onUploaded();
+  }
+
+  function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
+    void uploadAndExtract(file);
+  }
 
-    setUnreadableFile(null);
-    const name = file.name.toLowerCase();
+  async function handleRemove() {
+    setState({ status: "removing" });
+    const result = await removeChapterScript({ bookId, chapterId, chapterNumber });
 
-    if (name.endsWith(".docx")) {
-      setExtracting(true);
-      try {
-        const text = await extractDocxText(file);
-        onScriptTextChange(text);
-        onFileChange(file.name);
-      } catch {
-        setUnreadableFile(file.name);
-      } finally {
-        setExtracting(false);
-      }
+    if (!result.ok) {
+      setState({ status: "failed", message: result.formError });
+      setConfirmingRemove(false);
       return;
     }
 
-    const isTextFile = TEXT_EXTENSIONS.some((ext) => name.endsWith(ext));
-    if (!isTextFile) {
-      setUnreadableFile(file.name);
-      return;
-    }
-
-    const text = await file.text();
-    onScriptTextChange(text);
-    onFileChange(file.name);
+    setState({ status: "idle" });
+    setConfirmingRemove(false);
+    onUploaded();
   }
 
   /**
@@ -183,20 +367,29 @@ export function ChapterEditorScriptCard({
               </span>
             </div>
             <div className="flex items-center gap-4">
+              {/*
+                `Replace file` only when there IS a file to replace. A row with
+                text but no stored path predates prompt 17 — its source was
+                never kept and cannot be recovered — so it offers `Choose file`
+                instead. That is a normal state, not a repair.
+              */}
               <button
                 type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="text-helper text-muted hover:text-text"
+                disabled={busy}
+                onClick={() =>
+                  scriptPath
+                    ? setConfirmingReplace(true)
+                    : fileInputRef.current?.click()
+                }
+                className="text-helper text-muted hover:text-text disabled:opacity-50"
               >
-                Replace file
+                {scriptPath ? "Replace file" : "Choose file"}
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  onFileChange(null);
-                  onScriptTextChange("");
-                }}
-                className="text-helper text-destructive hover:underline"
+                disabled={busy}
+                onClick={() => setConfirmingRemove(true)}
+                className="text-helper text-destructive hover:underline disabled:opacity-50"
               >
                 Remove
               </button>
@@ -205,14 +398,12 @@ export function ChapterEditorScriptCard({
         ) : (
           <>
             <p className="text-helper text-muted">
-              {extracting
-                ? "Reading file…"
-                : "No script file uploaded — paste prose below or choose a file."}
+              No script file uploaded — paste prose below or choose a file.
             </p>
             <Button
               variant="outline"
               size="sm"
-              disabled={extracting}
+              disabled={busy}
               onClick={() => fileInputRef.current?.click()}
             >
               Choose file
@@ -224,16 +415,59 @@ export function ChapterEditorScriptCard({
       <input
         ref={fileInputRef}
         type="file"
-        accept=".docx,.txt,.md"
+        accept={acceptedFormats.join(",")}
         className="hidden"
+        disabled={busy}
         onChange={handleFileChange}
       />
 
-      {unreadableFile && (
-        <p className="px-6 pt-4 text-helper text-destructive">
-          {unreadableFile} — couldn&apos;t read this file. Paste the text
-          below instead.
-        </p>
+      {/*
+        Upload and extraction progress, and every failure. `Retry` is rendered
+        once for the whole failed state rather than per message — a terminal
+        state with no way out is the Manuscript-card defect recorded in
+        AGENTS.md.
+      */}
+      {state.status === "uploading" && (
+        <div className="flex flex-col gap-2 px-6 pt-4">
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="text-helper text-muted">Uploading…</span>
+            <span className="font-mono text-mono text-muted">
+              {formatBytes(state.uploadedBytes)} / {formatBytes(state.totalBytes)}
+            </span>
+          </div>
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-border">
+            <div
+              className="h-full rounded-full bg-primary transition-all"
+              style={{
+                width: `${Math.round((state.uploadedBytes / state.totalBytes) * 100)}%`,
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {state.status === "extracting" && (
+        <p className="px-6 pt-4 text-helper text-muted">Extracting text…</p>
+      )}
+
+      {state.status === "removing" && (
+        <p className="px-6 pt-4 text-helper text-muted">Removing…</p>
+      )}
+
+      {state.status === "failed" && (
+        <div className="flex items-center justify-between gap-4 px-6 pt-4">
+          <p className="text-helper text-destructive">{state.message}</p>
+          <Button
+            variant="muted"
+            size="sm"
+            onClick={() => {
+              setState({ status: "idle" });
+              fileInputRef.current?.click();
+            }}
+          >
+            Retry
+          </Button>
+        </div>
       )}
 
       {/*
@@ -441,6 +675,78 @@ export function ChapterEditorScriptCard({
       <p className="border-t border-border px-6 py-4 text-helper text-muted">
         {wordCount.toLocaleString()} {wordCount === 1 ? "word" : "words"}
       </p>
+
+      {/*
+        Replace is the only script action that needs confirming: it overwrites
+        script_text with the new file's contents, discarding any inline edits
+        the operator has made since the last upload. Choosing a file is
+        deferred until they confirm, so cancelling costs nothing.
+      */}
+      <Dialog
+        open={confirmingReplace}
+        onOpenChange={(open) => !busy && setConfirmingReplace(open)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Replace this script file?</DialogTitle>
+            <DialogDescription>
+              The new file&apos;s text replaces everything in the editor,
+              including any edits made since the last upload. The original file
+              is deleted once the new one is saved.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="muted"
+              disabled={busy}
+              onClick={() => setConfirmingReplace(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={busy}
+              onClick={() => {
+                setConfirmingReplace(false);
+                fileInputRef.current?.click();
+              }}
+            >
+              Choose replacement
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={confirmingRemove}
+        onOpenChange={(open) => !busy && setConfirmingRemove(open)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove this script?</DialogTitle>
+            <DialogDescription>
+              The chapter&apos;s text is cleared and the uploaded file is
+              deleted from storage. This chapter returns to the Dashboard queue.
+              This can&apos;t be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="muted"
+              disabled={busy}
+              onClick={() => setConfirmingRemove(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={busy}
+              onClick={() => void handleRemove()}
+            >
+              {state.status === "removing" ? "Removing…" : "Remove script"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

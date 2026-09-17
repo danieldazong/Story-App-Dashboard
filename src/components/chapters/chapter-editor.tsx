@@ -44,6 +44,7 @@ export function ChapterEditor({
   nextHref,
   acceptedAudioFormats,
   maxAudioSizeMb,
+  acceptedScriptFormats,
 }: {
   bookId: string;
   bookTitle: string;
@@ -53,6 +54,7 @@ export function ChapterEditor({
   /** From app_settings — never constants. See AGENTS.md, prompt 16 notes. */
   acceptedAudioFormats: string[];
   maxAudioSizeMb: number;
+  acceptedScriptFormats: string[];
 }) {
   const router = useRouter();
   // Derived from the row's own updated_at, never from a local clock — the
@@ -69,7 +71,11 @@ export function ChapterEditor({
     mode: "onChange",
   });
 
-  const { number, title, access, scriptText, scriptFileName } = form.watch();
+  // scriptFileName is deliberately not destructured: the script card reads the
+  // file name from the server row (chapter.script), not from form state, since
+  // an upload extracts and persists server-side and then revalidates. It stays
+  // in the schema and in the submit payload so a normal Save preserves it.
+  const { number, title, access, scriptText } = form.watch();
   // Narration is no longer part of the form's unsaved state. An upload persists
   // itself the moment it completes and the route revalidates, so there is
   // nothing for Save chapter to write — and `audioDirty` claiming otherwise
@@ -231,6 +237,14 @@ export function ChapterEditor({
 
       <div className="grid grid-cols-3 gap-6">
         <div className="col-span-2">
+          {/*
+            fileName and scriptPath come from the server row, not form state:
+            an upload extracts and persists server-side, then revalidates, so
+            the card re-renders from the persisted truth. Feeding the extracted
+            text back through react-hook-form would mark the form dirty over
+            work already saved — the same reason narration stopped driving
+            `audioDirty`.
+          */}
           <ChapterEditorScriptCard
             scriptText={scriptText}
             onScriptTextChange={(value) =>
@@ -239,10 +253,18 @@ export function ChapterEditor({
                 shouldValidate: true,
               })
             }
-            fileName={scriptFileName}
-            onFileChange={(fileName) =>
-              form.setValue("scriptFileName", fileName, { shouldDirty: true })
+            fileName={
+              chapter.script.state === "ready" ? chapter.script.fileName : null
             }
+            scriptPath={
+              chapter.script.state === "ready" ? chapter.script.path : null
+            }
+            bookId={bookId}
+            chapterId={chapter.id}
+            chapterNumber={chapter.number}
+            chapterTitle={chapter.title}
+            onUploaded={() => router.refresh()}
+            acceptedFormats={acceptedScriptFormats}
           />
         </div>
 

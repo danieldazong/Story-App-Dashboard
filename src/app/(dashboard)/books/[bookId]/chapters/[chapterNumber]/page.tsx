@@ -118,6 +118,7 @@ export default async function ChapterEditorPage({
       nextHref={next !== null ? `/books/${book.id}/chapters/${next}` : null}
       acceptedAudioFormats={settings.acceptedAudioFormats}
       maxAudioSizeMb={settings.maxAudioSizeMb}
+      acceptedScriptFormats={settings.acceptedScriptFormats}
     />
   );
 }

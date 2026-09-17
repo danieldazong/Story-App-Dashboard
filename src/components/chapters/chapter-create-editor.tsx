@@ -31,6 +31,7 @@ export function ChapterCreateEditor({
   existingNumbers,
   acceptedAudioFormats,
   maxAudioSizeMb,
+  acceptedScriptFormats,
 }: {
   bookId: string;
   bookTitle: string;
@@ -40,6 +41,8 @@ export function ChapterCreateEditor({
   /** From app_settings, for the Narration card's constraint line. */
   acceptedAudioFormats: string[];
   maxAudioSizeMb: number;
+  /** From app_settings, for the Chapter script card. */
+  acceptedScriptFormats: string[];
 }) {
   const [numberTaken, setNumberTaken] = useState<number | null>(null);
   const [scriptFileName, setScriptFileName] = useState<string | null>(null);
@@ -142,6 +145,7 @@ export function ChapterCreateEditor({
             }
             fileName={scriptFileName}
             onFileNameChange={setScriptFileName}
+            acceptedFormats={acceptedScriptFormats}
           />
         </div>
 

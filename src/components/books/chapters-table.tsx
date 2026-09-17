@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -260,6 +261,23 @@ export function ChaptersCard({
         <div className="card__header">
           <h2 className="card__header-title">Chapters</h2>
           <div className="card__header-actions">
+            {/*
+              Bulk import needs a saved book to import into, the same constraint
+              Add chapter carries in create mode. Rendered disabled rather than
+              hidden so the capability is discoverable before the book exists.
+            */}
+            <Button
+              asChild={canOpenChapter}
+              variant="outline"
+              size="sm"
+              disabled={!canOpenChapter}
+            >
+              {canOpenChapter ? (
+                <Link href={`/books/${bookId}/import`}>Import chapters</Link>
+              ) : (
+                <span>Import chapters</span>
+              )}
+            </Button>
             <Button variant="outline" size="sm" onClick={onAddChapter}>
               Add chapter
             </Button>
@@ -307,6 +325,15 @@ export function ChaptersCard({
             <Button variant="outline" size="sm" onClick={onAddChapter}>
               Add chapter
             </Button>
+            {/*
+              The copy above has promised "or import a folder of scripts" since
+              prompt 05, with nothing behind it until now.
+            */}
+            {canOpenChapter && (
+              <Button asChild variant="outline" size="sm">
+                <Link href={`/books/${bookId}/import`}>Import scripts</Link>
+              </Button>
+            )}
           </div>
         </div>
       ) : (

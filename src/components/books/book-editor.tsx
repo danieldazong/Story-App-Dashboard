@@ -44,6 +44,7 @@ function ComposerRow({
   onCreate,
   acceptedAudioFormats,
   maxAudioSizeMb,
+  acceptedScriptFormats,
 }: {
   bookId: string;
   chapters: ChapterListItem[];
@@ -51,6 +52,7 @@ function ComposerRow({
   onCreate: () => void;
   acceptedAudioFormats: string[];
   maxAudioSizeMb: number;
+  acceptedScriptFormats: string[];
 }) {
   const defaultChapterAccess = useWatch<BookDetailsValues>({
     name: "defaultChapterAccess",
@@ -71,6 +73,7 @@ function ComposerRow({
       onCreate={onCreate}
       acceptedAudioFormats={acceptedAudioFormats}
       maxAudioSizeMb={maxAudioSizeMb}
+      acceptedScriptFormats={acceptedScriptFormats}
     />
   );
 }
@@ -79,11 +82,14 @@ export function BookEditor({
   mode,
   acceptedAudioFormats,
   maxAudioSizeMb,
+  acceptedScriptFormats,
 }: {
   mode: BookEditorMode;
   /** From app_settings, for the composer's Narration card constraint line. */
   acceptedAudioFormats: string[];
   maxAudioSizeMb: number;
+  /** From app_settings, for the composer's Chapter script card. */
+  acceptedScriptFormats: string[];
 }) {
   const router = useRouter();
   const isCreate = mode.kind === "create";
@@ -257,6 +263,7 @@ export function BookEditor({
             onCreate={() => router.refresh()}
             acceptedAudioFormats={acceptedAudioFormats}
             maxAudioSizeMb={maxAudioSizeMb}
+            acceptedScriptFormats={acceptedScriptFormats}
           />
         )}
 

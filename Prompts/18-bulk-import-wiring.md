@@ -1,5 +1,32 @@
 # 18-bulk-import-wiring
 
+> **SUPERSEDED (2026-09-17) — do not implement this prompt.**
+>
+> This is a wiring prompt: it makes an existing Bulk script import screen do real work. That
+> screen was never built. Prompt 10 specified it, but was written for the pre-Supabase,
+> mock-data app and never implemented, so every anchor below points at something absent:
+> `app/(dashboard)/uploads/bulk-import/page.tsx`, `lib/bulk-import.ts`, the `/uploads` queue
+> screen, the preview table, the summary bar and the confirm dialog. A grep for
+> `bulk-import|bulkImport|/uploads` across `src/` returns zero matches.
+>
+> Splitting this work across two prompts would also mean shipping a preview table that cannot
+> import — exactly the "success toast over a write that never happened" failure recorded in
+> AGENTS.md under prompt 14. So **prompt 10 was rewritten against the real codebase and now
+> covers both the screen and the wiring.** Implement `10-bulk-script-import.md` instead.
+>
+> Two instructions below were deliberately NOT carried over, and the reasons are recorded in
+> the rewritten prompt:
+>
+> - **`lib/script-text.ts`** — prompt 17 already made `lib/script-normalise.ts` the shared
+>   normaliser and `lib/docx.ts` the shared extractor, with both a browser and a server entry
+>   point. Creating a third module would be the duplication this prompt was trying to prevent.
+> - **Virtualising the table** — `@tanstack/react-virtual` is not installed and AGENTS.md
+>   forbids installing without asking. The batch is capped at 150 files instead, which an
+>   unvirtualised table renders acceptably. Raise the cap only alongside real virtualisation.
+>
+> Kept for reference: the per-row state machine, the concurrency and retry rules, the
+> one-activity-entry-per-batch rule and the partial-success stance all carried over intact.
+
 Read AGENTS.md first and follow it strictly.
 
 Study the existing Bulk script import screen (`app/(dashboard)/uploads/bulk-import/page.tsx`),

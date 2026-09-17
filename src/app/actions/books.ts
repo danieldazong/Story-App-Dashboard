@@ -151,14 +151,17 @@ export async function deleteBook(bookId: string): Promise<ActionResult> {
     client.from("books").select("title, cover_path").eq("id", bookId).maybeSingle(),
     client
       .from("chapters")
-      .select("audio_path")
-      .eq("book_id", bookId)
-      .not("audio_path", "is", null),
+      .select("audio_path, script_path")
+      .eq("book_id", bookId),
   ]);
 
   const book = bookRead.data;
-  const audioPaths = (chapterRead.data ?? [])
+  const chapterRows = chapterRead.data ?? [];
+  const audioPaths = chapterRows
     .map((row) => row.audio_path)
+    .filter((path): path is string => path !== null);
+  const scriptPaths = chapterRows
+    .map((row) => row.script_path)
     .filter((path): path is string => path !== null);
 
   const { error, count } = await client
@@ -203,10 +206,20 @@ export async function deleteBook(bookId: string): Promise<ActionResult> {
     }
   }
 
-  // No `scripts` cleanup: nothing in this codebase writes to that bucket yet
-  // (script text lives on the chapter row, and `script_path` is never
-  // populated). Add it here when prompt 17 starts storing source files, rather
-  // than writing speculative cleanup for a path that does not exist.
+  // Scripts too, as of prompt 17 — that bucket now holds the original uploaded
+  // file as the source of record, so a deleted book would otherwise leak it
+  // exactly as it used to leak covers and narration.
+  if (scriptPaths.length > 0) {
+    const { error: scriptError } = await client.storage
+      .from("scripts")
+      .remove(scriptPaths);
+    if (scriptError) {
+      console.warn(
+        `Book deleted but ${scriptPaths.length} script file(s) were not removed: ${scriptError.message}`,
+      );
+    }
+  }
+
   await logActivity(
     client,
     actorId,
