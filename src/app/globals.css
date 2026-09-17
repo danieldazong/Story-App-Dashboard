@@ -1,0 +1,110 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-page: #fbf9f7;
+  --color-card: #ffffff;
+  --color-border: #e7e1dc;
+  --color-primary: #e8663f;
+  --color-primary-hover: #d4552f;
+  --color-text: #1a1420;
+  --color-muted: #6e6478;
+  --color-sidebar: #1f1530;
+  --color-sidebar-active: #2c1e42;
+  --color-status-ok: #2f8c7f;
+  --color-status-warn: #b07c2e;
+  --color-destructive: #c0432f;
+}
+
+@layer base {
+  html,
+  body {
+    height: 100%;
+  }
+}
+
+@layer components {
+  /* Card surface */
+  .card {
+    @apply bg-card border border-border rounded-card;
+  }
+
+  /* Card header row: title + optional right-aligned actions */
+  .card__header {
+    @apply flex items-end justify-between gap-4;
+  }
+
+  .card__header-title {
+    @apply text-page-title text-text;
+  }
+
+  .card__header-actions {
+    @apply flex items-center gap-2;
+  }
+
+  /* Card sub-line: helper text beneath a card heading */
+  .card__sub-line {
+    @apply text-helper text-muted;
+  }
+
+  /* Field group: label, control, helper line */
+  .field-group {
+    @apply flex flex-col gap-1.5;
+  }
+
+  .field-group__label {
+    @apply text-section-label text-muted;
+  }
+
+  .field-group__helper {
+    @apply text-helper text-muted;
+  }
+
+  .field-group__helper--error {
+    @apply text-destructive;
+  }
+
+  /* Table wrapper: clips to card bounds so no column overflows */
+  .table-wrapper {
+    @apply w-full overflow-x-auto rounded-card;
+  }
+
+  .table-wrapper__table {
+    @apply w-full border-collapse;
+  }
+
+  /* Status pill */
+  .status-pill {
+    @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-helper font-medium;
+  }
+
+  .status-pill--ok {
+    @apply border-status-ok/30 bg-status-ok/10 text-status-ok;
+  }
+
+  .status-pill--warn {
+    @apply border-status-warn/30 bg-status-warn/10 text-status-warn;
+  }
+
+  .status-pill--destructive {
+    @apply border-destructive/30 bg-destructive/10 text-destructive;
+  }
+
+  /* Segmented control */
+  .segmented-control {
+    @apply inline-flex items-center gap-1 rounded-input border border-border bg-card p-1;
+  }
+
+  .segmented-control__option {
+    @apply rounded-md px-3 py-1.5 text-body text-text transition-colors;
+  }
+
+  .segmented-control__option--selected {
+    @apply bg-sidebar text-white;
+  }
+
+  .segmented-control__option--unselected {
+    @apply bg-card border border-border text-text;
+  }
+}
