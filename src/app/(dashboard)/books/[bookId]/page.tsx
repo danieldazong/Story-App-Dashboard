@@ -4,7 +4,7 @@ import { Breadcrumbs } from "@/components/shell/breadcrumbs";
 import { BookEditor } from "@/components/books/book-editor";
 import { QueryErrorCard } from "@/components/shell/query-error-card";
 import { serverSupabaseWithSettings } from "@/lib/server-supabase";
-import { getBook, getChapters } from "@/lib/queries";
+import { getBook, getChaptersList } from "@/lib/queries";
 
 export default async function BookEditorPage({
   params,
@@ -26,6 +26,7 @@ export default async function BookEditorPage({
         />
         <QueryErrorCard
           message={bookResult.error}
+          kind={bookResult.kind}
           retryHref={`/books/${bookId}`}
         />
       </div>
@@ -53,7 +54,9 @@ export default async function BookEditorPage({
     );
   }
 
-  const chaptersResult = await getChapters(
+  // The list view, not getChapters(): this screen renders word counts and
+  // presence, never chapter prose. See AGENTS.md, Performance Rules.
+  const chaptersResult = await getChaptersList(
     client,
     book.id,
     settings.publicCdnDomain,
@@ -67,6 +70,7 @@ export default async function BookEditorPage({
         />
         <QueryErrorCard
           message={chaptersResult.error}
+          kind={chaptersResult.kind}
           retryHref={`/books/${bookId}`}
         />
       </div>

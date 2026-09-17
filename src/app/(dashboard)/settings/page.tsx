@@ -13,7 +13,11 @@ export default async function SettingsPage() {
       <div className="flex flex-col gap-6">
         <PageHeader breadcrumbs={[{ label: "Settings" }]} title="Settings" />
         <div className="max-w-[720px]">
-          <QueryErrorCard message={result.error} retryHref="/settings" />
+          <QueryErrorCard
+            message={result.error}
+            kind={result.kind}
+            retryHref="/settings"
+          />
         </div>
       </div>
     );

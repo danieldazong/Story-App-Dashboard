@@ -41,13 +41,23 @@ const TEXT_EXTENSIONS = [".txt", ".md"];
 
 export type ManuscriptCardHandle = {
   /**
+   * How many progress steps flush() will report — one per previewed section,
+   * because each is its own sequential createChapter round trip.
+   *
+   * Called by the Create Story dialog BEFORE the chain starts so the bar's
+   * denominator is real. A 9-chapter manuscript genuinely is 9 steps.
+   */
+  pendingSteps: () => number;
+  /**
    * Creates the previewed chapters against a book id supplied by the caller.
    *
    * Used during story creation: the card's own `bookId` prop is still empty at
    * that moment, so the id comes from the freshly-created row instead. Returns
    * silently when there is nothing pending.
+   *
+   * `report` is called once per chapter actually created.
    */
-  flush: (bookId: string) => Promise<void>;
+  flush: (bookId: string, report?: (label: string) => void) => Promise<void>;
 };
 
 export const ManuscriptCard = forwardRef<
@@ -79,12 +89,15 @@ export const ManuscriptCard = forwardRef<
     sections: ManuscriptSection[],
     fileName: string,
     startNumber: number,
+    report?: (label: string) => void,
   ): Promise<{ created: number; error: string | null }> {
     let nextNumber = startNumber;
     let created = 0;
 
     // Sequential, not parallel: chapter numbers race for the
-    // (book_id, number) unique constraint otherwise.
+    // (book_id, number) unique constraint otherwise. That sequence is exactly
+    // why progress is reported per chapter — each one is a separate round trip
+    // the operator would otherwise wait through blind.
     for (const section of sections) {
       const result = await createChapter({
         bookId: targetBookId,
@@ -106,13 +119,17 @@ export const ManuscriptCard = forwardRef<
 
       created += 1;
       nextNumber += 1;
+      report?.(`Created chapter ${created} of ${sections.length}`);
     }
 
     return { created, error: null };
   }
 
   useImperativeHandle(ref, () => ({
-    async flush(newBookId: string) {
+    pendingSteps() {
+      return state.status === "preview" ? state.sections.length : 0;
+    },
+    async flush(newBookId: string, report?: (label: string) => void) {
       if (state.status !== "preview") return;
 
       const { created, error } = await createSections(
@@ -120,6 +137,7 @@ export const ManuscriptCard = forwardRef<
         state.sections,
         state.file.name,
         existingNumbers.length === 0 ? 1 : Math.max(...existingNumbers) + 1,
+        report,
       );
 
       if (error) {
@@ -298,30 +316,48 @@ export const ManuscriptCard = forwardRef<
         </div>
       ) : (
         <div className="flex h-[120px] w-full flex-col items-center justify-center gap-3 rounded-input border border-dashed border-border bg-page p-4 text-center">
+          {/*
+            The picker is rendered once, for every state except `extracting` —
+            not repeated inside each branch.
+
+            `unreadable` and `too-few-sections` previously rendered their
+            message and nothing else, which left the operator with no control at
+            all: the file input is hidden, and the Discard/Confirm row only
+            exists in the `preview` branch. A page reload was the only way out.
+            Making the button structural rather than per-state means a fourth
+            terminal state added later inherits the way out instead of
+            reintroducing the dead end — the same rule the other drop zones and
+            chapter-script-card already follow.
+
+            `extracting` stays button-free deliberately: it resolves on its own,
+            and offering a picker mid-read invites a race between two
+            extractions.
+          */}
           {state.status === "extracting" ? (
             <p className="text-helper text-muted">
               Reading {state.file.name}…
             </p>
-          ) : state.status === "unreadable" ? (
-            <p className="text-helper text-muted">
-              No readable text found in this file.
-            </p>
-          ) : state.status === "too-few-sections" ? (
-            <p className="text-helper text-muted">
-              No chapter breaks found. Add chapters one at a time in the
-              Chapter script card instead.
-            </p>
           ) : (
             <>
               <p className="text-helper text-muted">
-                Drop a manuscript file, or choose one
+                {state.status === "unreadable"
+                  ? "No readable text found in this file."
+                  : state.status === "too-few-sections"
+                    ? "No chapter breaks found. Add chapters one at a time in the Chapter script card instead."
+                    : "Drop a manuscript file, or choose one"}
               </p>
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => fileInputRef.current?.click()}
               >
-                Choose file
+                {/*
+                  After a rejected file the action is a replacement, not a first
+                  choice. Re-picking the SAME file works: handleFileChange
+                  clears `event.target.value`, so onChange fires again even for
+                  an identical selection the operator has since fixed on disk.
+                */}
+                {state.status === "empty" ? "Choose file" : "Choose another file"}
               </Button>
             </>
           )}

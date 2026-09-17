@@ -29,11 +29,13 @@ import {
   type CreateBookDialogHandle,
 } from "@/components/books/create-book-dialog";
 import { updateBook } from "@/app/actions/books";
-import type { Book, Chapter } from "@/types/catalog";
+import type { Book, ChapterListItem } from "@/types/catalog";
 
 export type BookEditorMode =
   | { kind: "create" }
-  | { kind: "edit"; book: Book; chapters: Chapter[] };
+  // ChapterListItem, not Chapter: this screen needs presence and word counts,
+  // never the prose. See AGENTS.md, Performance Rules.
+  | { kind: "edit"; book: Book; chapters: ChapterListItem[] };
 
 function ComposerRow({
   bookId,
@@ -42,7 +44,7 @@ function ComposerRow({
   onCreate,
 }: {
   bookId: string;
-  chapters: Chapter[];
+  chapters: ChapterListItem[];
   composerRef: React.Ref<ChapterComposerHandle>;
   onCreate: () => void;
 }) {
@@ -174,12 +176,23 @@ export function BookEditor({ mode }: { mode: BookEditorMode }) {
         {isCreate && (
           <CreateBookDialog
             ref={createDialogRef}
-            onCreated={async (newBookId) => {
+            // Asked before anything runs, so the dialog's progress bar knows
+            // its denominator. Each card reports only what it is actually
+            // holding, using the same test its own flush() uses — so the count
+            // promised and the work done cannot disagree.
+            pendingSteps={() =>
+              (coverRef.current?.pendingSteps() ?? 0) +
+              (manuscriptRef.current?.pendingSteps() ?? 0) +
+              (composerRef.current?.pendingSteps() ?? 0)
+            }
+            onCreated={async (newBookId, report) => {
               // Flush anything composed before the story existed, so work done
-              // during creation is not thrown away on navigation.
-              await coverRef.current?.flush(newBookId);
-              await manuscriptRef.current?.flush(newBookId);
-              await composerRef.current?.flush(newBookId);
+              // during creation is not thrown away on navigation. Sequential by
+              // necessity (chapter numbers race otherwise), which is precisely
+              // why each step reports as it finishes.
+              await coverRef.current?.flush(newBookId, report);
+              await manuscriptRef.current?.flush(newBookId, report);
+              await composerRef.current?.flush(newBookId, report);
             }}
           />
         )}

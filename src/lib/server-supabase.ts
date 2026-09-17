@@ -1,7 +1,11 @@
 import { cache } from "react";
 import { auth } from "@clerk/nextjs/server";
 import { createSupabaseClient } from "@/lib/supabase";
-import { getAppSettings, type AppSettings } from "@/lib/queries";
+import {
+  getAppSettings,
+  settingsFallback,
+  type AppSettings,
+} from "@/lib/queries";
 import type { Database } from "@/types/database";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -41,23 +45,19 @@ export async function serverSupabaseWithSettings(): Promise<{
   if (!result.ok) {
     // Settings failing should not blank out a catalog screen, so the caller
     // gets the error to surface and a usable client either way.
-    const fallback = await getAppSettings(client);
+    //
+    // This used to re-run getAppSettings() here — the identical query, on the
+    // same client, in the same tick — and call the result a "fallback". It was
+    // neither a retry (no delay, so the same failure simply recurred) nor a
+    // fallback, and it doubled the round trips on the failure path. Real,
+    // network-gated retry now lives inside getAppSettings itself.
+    //
+    // The defaults come from settingsFallback() rather than a second inline
+    // copy: the old literal here had already drifted from it, defaulting the
+    // CDN domain to "" where settingsFallback() uses SETTINGS_DEFAULTS.
     return {
       client,
-      settings: fallback.ok
-        ? fallback.data
-        : {
-            storageProvider: "supabase_storage",
-            bucketName: "novelnow-media",
-            publicCdnDomain: process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
-            maxAudioSizeMb: 100,
-            acceptedAudioFormats: [".m4a", ".mp3", ".wav"],
-            acceptedScriptFormats: [".txt", ".docx", ".md"],
-            detectDurationAutomatically: true,
-            defaultChapterAccess: "locked",
-            freeChaptersAtStart: 3,
-            defaultMaturity: "mature_17",
-          },
+      settings: settingsFallback(),
       settingsError: result.error,
     };
   }

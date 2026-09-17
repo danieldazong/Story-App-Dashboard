@@ -25,6 +25,7 @@ export default async function ChapterEditorPage({
         />
         <QueryErrorCard
           message={bookResult.error}
+          kind={bookResult.kind}
           retryHref={`/books/${bookId}/chapters/${chapterNumber}`}
         />
       </div>
@@ -73,6 +74,7 @@ export default async function ChapterEditorPage({
         />
         <QueryErrorCard
           message={chapterResult.error}
+          kind={chapterResult.kind}
           retryHref={`/books/${bookId}/chapters/${chapterNumber}`}
         />
       </div>

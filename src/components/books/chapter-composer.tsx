@@ -35,14 +35,24 @@ type ComposerValues = z.infer<typeof composerSchema>;
 export type ChapterComposerHandle = {
   focusTitle: () => void;
   /**
+   * How many progress steps flush() will report — 1 when a chapter is composed,
+   * 0 when the form is untouched.
+   *
+   * Uses the same "is there a title?" test as flush() itself, so the count the
+   * progress bar promises and the work actually done cannot disagree.
+   */
+  pendingSteps: () => number;
+  /**
    * Creates the chapter currently composed, against a book id supplied by the
    * caller.
    *
    * Used during story creation: the composer's own `bookId` prop is still empty
    * at that moment, so the id comes from the freshly-created row instead.
    * Returns silently when the form is empty or invalid.
+   *
+   * `report` is called once when the chapter has been created.
    */
-  flush: (bookId: string) => Promise<void>;
+  flush: (bookId: string, report?: (label: string) => void) => Promise<void>;
 };
 
 export const ChapterComposer = forwardRef<
@@ -97,7 +107,10 @@ export const ChapterComposer = forwardRef<
       titleInputRef.current?.focus();
       setHighlighted(true);
     },
-    async flush(newBookId: string) {
+    pendingSteps() {
+      return form.getValues().title.trim() ? 1 : 0;
+    },
+    async flush(newBookId: string, report?: (label: string) => void) {
       const values = form.getValues();
       // Nothing composed: an untitled, empty form is not pending work.
       if (!values.title.trim()) return;
@@ -114,12 +127,16 @@ export const ChapterComposer = forwardRef<
 
       if (!result.ok) {
         toast.error(result.formError);
+        // Still reported: the step is over, and a bar frozen on a failed step
+        // is indistinguishable from one that hung.
+        report?.("Chapter created");
         return;
       }
 
       toast.success(
         `Chapter ${String(result.data.number).padStart(2, "0")} created.`,
       );
+      report?.(`Chapter ${String(result.data.number).padStart(2, "0")} created`);
       form.reset({
         number: result.data.number + 1,
         title: "",

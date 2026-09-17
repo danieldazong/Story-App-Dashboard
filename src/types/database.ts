@@ -90,6 +90,13 @@ export type Database = {
             foreignKeyName: "activity_log_chapter_id_fkey"
             columns: ["chapter_id"]
             isOneToOne: false
+            referencedRelation: "chapters_list"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "activity_log_chapter_id_fkey"
+            columns: ["chapter_id"]
+            isOneToOne: false
             referencedRelation: "chapters_needing_attention"
             referencedColumns: ["chapter_id"]
           },
@@ -277,6 +284,84 @@ export type Database = {
       }
     }
     Views: {
+      chapters_list: {
+        Row: {
+          access: Database["public"]["Enums"]["chapter_access"] | null
+          audio_duration_seconds: number | null
+          audio_duration_source:
+            | Database["public"]["Enums"]["duration_source"]
+            | null
+          audio_file_name: string | null
+          audio_path: string | null
+          audio_size_bytes: number | null
+          book_id: string | null
+          created_at: string | null
+          has_script: boolean | null
+          id: string | null
+          number: number | null
+          script_file_name: string | null
+          script_path: string | null
+          script_word_count: number | null
+          title: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          access?: Database["public"]["Enums"]["chapter_access"] | null
+          audio_duration_seconds?: number | null
+          audio_duration_source?:
+            | Database["public"]["Enums"]["duration_source"]
+            | null
+          audio_file_name?: string | null
+          audio_path?: string | null
+          audio_size_bytes?: number | null
+          book_id?: string | null
+          created_at?: string | null
+          has_script?: never
+          id?: string | null
+          number?: number | null
+          script_file_name?: string | null
+          script_path?: string | null
+          script_word_count?: never
+          title?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          access?: Database["public"]["Enums"]["chapter_access"] | null
+          audio_duration_seconds?: number | null
+          audio_duration_source?:
+            | Database["public"]["Enums"]["duration_source"]
+            | null
+          audio_file_name?: string | null
+          audio_path?: string | null
+          audio_size_bytes?: number | null
+          book_id?: string | null
+          created_at?: string | null
+          has_script?: never
+          id?: string | null
+          number?: number | null
+          script_file_name?: string | null
+          script_path?: string | null
+          script_word_count?: never
+          title?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chapters_book_id_fkey"
+            columns: ["book_id"]
+            isOneToOne: false
+            referencedRelation: "books"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chapters_book_id_fkey"
+            columns: ["book_id"]
+            isOneToOne: false
+            referencedRelation: "chapters_needing_attention"
+            referencedColumns: ["book_id"]
+          },
+        ]
+      }
       chapters_needing_attention: {
         Row: {
           book_id: string | null

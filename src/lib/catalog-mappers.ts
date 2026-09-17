@@ -4,8 +4,10 @@ import type {
   AudioAsset,
   Book,
   Chapter,
+  ChapterListItem,
   CoverAsset,
   ScriptAsset,
+  ScriptSummary,
 } from "@/types/catalog";
 
 type BookRow = Database["public"]["Tables"]["books"]["Row"];
@@ -99,5 +101,85 @@ export function toChapter(row: ChapterRow, cdnDomain: string): Chapter {
     audio: toAudioAsset(row, cdnDomain),
     access: row.access,
     updatedAt: row.updated_at,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// List shapes — from the chapters_list view, which omits script_text
+// ---------------------------------------------------------------------------
+
+type ChapterListRow = Database["public"]["Views"]["chapters_list"]["Row"];
+
+/**
+ * Maps one `chapters_list` row, or null if the row cannot be trusted.
+ *
+ * Every column of a view generates as nullable — Postgres cannot prove
+ * non-nullability through a view — even though `chapters.id`, `number`, `title`
+ * and `access` are all `not null` on the base table. Rather than widening
+ * ChapterListItem to match the generator's pessimism, a row missing any of them
+ * is treated as unusable and dropped by the caller. Same approach as
+ * getNeedsAttention() with the attention view (see types/catalog.ts).
+ */
+export function toChapterListItem(
+  row: ChapterListRow,
+  cdnDomain: string,
+): ChapterListItem | null {
+  if (
+    row.id === null ||
+    row.book_id === null ||
+    row.number === null ||
+    row.title === null ||
+    row.access === null ||
+    row.updated_at === null
+  ) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    bookId: row.book_id,
+    number: row.number,
+    title: row.title,
+    script: toScriptSummary(row),
+    audio: toAudioAssetFromList(row, cdnDomain),
+    access: row.access,
+    updatedAt: row.updated_at,
+  };
+}
+
+/**
+ * `has_script` is the view's rendering of `script_text is not null`, and
+ * `script_word_count` is computed in SQL to mirror countWords() exactly (proven
+ * against live data when the view was added). The text itself is deliberately
+ * absent — that is the entire point of the view.
+ */
+function toScriptSummary(row: ChapterListRow): ScriptSummary {
+  if (!row.has_script) return { state: "missing" };
+  return {
+    state: "ready",
+    fileName: row.script_file_name ?? "script.txt",
+    wordCount: row.script_word_count ?? 0,
+  };
+}
+
+/**
+ * The same shape toAudioAsset() produces, from the view's nullable columns.
+ *
+ * Kept separate rather than widening toAudioAsset: that function takes a
+ * ChapterRow and is used where columns are known non-null, and loosening it
+ * would push view-shaped uncertainty onto the chapter editor's path too.
+ */
+function toAudioAssetFromList(
+  row: ChapterListRow,
+  cdnDomain: string,
+): AudioAsset {
+  if (!row.audio_path) return { state: "missing" };
+  return {
+    state: "ready",
+    fileName: row.audio_file_name ?? row.audio_path.split("/").pop() ?? "audio",
+    sizeBytes: row.audio_size_bytes ?? 0,
+    durationSeconds: row.audio_duration_seconds ?? 0,
+    durationSource: row.audio_duration_source ?? "detected",
+    url: storageUrl(cdnDomain, "audio", row.audio_path),
   };
 }

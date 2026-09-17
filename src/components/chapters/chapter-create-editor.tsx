@@ -74,6 +74,7 @@ export function ChapterCreateEditor({
           { label: bookTitle, href: `/books/${bookId}` },
           { label: "New chapter" },
         ]}
+        backLink={{ href: `/books/${bookId}`, label: bookTitle }}
         title="New chapter"
         action={
           <Button

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
@@ -174,9 +175,32 @@ export function ChapterEditor({
             { label: `Chapter ${chapter.number}` },
           ]}
         />
+        {/*
+          The breadcrumb above already links back to the book, but muted inline
+          text does not read as a control — operators were reaching for the
+          browser's back button instead. This states the destination by name.
+
+          Deliberately a text link rather than an arrow icon button: the Chapter
+          settings card already uses ChevronLeft for PREVIOUS CHAPTER, and a
+          second left-arrow meaning something else would be a genuine ambiguity.
+          Matches the "← Back to Settings" pattern in app/account/[[...rest]].
+        */}
+        <Link
+          href={`/books/${bookId}`}
+          className="w-fit text-helper text-muted hover:text-text"
+        >
+          ← Back to {bookTitle}
+        </Link>
         <div className="card__header">
           <div className="flex items-baseline gap-3">
-            <h1 className="text-page-title">
+            {/*
+              text-chapter-title, not text-page-title: this heading carries an
+              authored chapter title that can run to two lines, unlike the short
+              screen names every other page title holds. Scoped to this h1 — the
+              shared token stays 24px for Dashboard, Books, Settings and the
+              rest.
+            */}
+            <h1 className="text-chapter-title">
               Chapter {chapter.number} · {chapter.title}
             </h1>
             {statusLine && (

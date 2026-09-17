@@ -34,7 +34,18 @@ export default async function DashboardPage() {
     getRecentActivity(client),
   ]);
 
-  const hasBooks = counts.ok && counts.data.books > 0;
+  // A failed count is not an empty catalog.
+  //
+  // This was `counts.ok && counts.data.books > 0`, which collapsed "the count
+  // failed, so we don't know" and "the count succeeded and there are zero
+  // books" into the same `false` — and that is what let this page print
+  // "No books yet" over a catalog of two books whose activity was rendering
+  // directly below it. Three states, because there are three.
+  const catalogState: "unknown" | "empty" | "populated" = !counts.ok
+    ? "unknown"
+    : counts.data.books > 0
+      ? "populated"
+      : "empty";
   const visibleAttention = attention.ok
     ? attention.data.slice(0, MAX_VISIBLE_ATTENTION_ROWS)
     : [];
@@ -74,7 +85,11 @@ export default async function DashboardPage() {
           </div>
         </div>
       ) : (
-        <QueryErrorCard message={counts.error} retryHref="/" />
+        <QueryErrorCard
+          message={counts.error}
+          kind={counts.kind}
+          retryHref="/"
+        />
       )}
 
       <div className="card">
@@ -84,31 +99,20 @@ export default async function DashboardPage() {
 
         {!attention.ok ? (
           <div className="px-6 pb-6">
-            <QueryErrorCard message={attention.error} retryHref="/" />
+            <QueryErrorCard
+              message={attention.error}
+              kind={attention.kind}
+              retryHref="/"
+            />
           </div>
-        ) : !hasBooks ? (
-          <div className="flex flex-col gap-3 px-6 pb-6">
-            <p className="text-body text-text">No books yet</p>
-            <p className="card__sub-line">
-              Create a book to start tracking scripts and narration audio.
-            </p>
-            <div>
-              <Button asChild>
-                <Link href="/books/new">New Story</Link>
-              </Button>
-            </div>
-          </div>
-        ) : attention.data.length === 0 ? (
-          <div className="flex flex-col gap-2 px-6 pb-6">
-            <span className="status-pill status-pill--ok w-fit">
-              Everything is complete
-            </span>
-            <p className="card__sub-line">
-              Every chapter across your catalog has a script and narration
-              audio.
-            </p>
-          </div>
-        ) : (
+        ) : /*
+            The work queue is checked BEFORE the catalog size, deliberately.
+            If these rows came back they are real, and they must render
+            whatever the separate counts query did — that ordering is what
+            makes this card structurally incapable of claiming "No books yet"
+            beside a populated table.
+          */
+        attention.data.length > 0 ? (
           <>
             <div className="table-wrapper">
               <Table>
@@ -150,6 +154,46 @@ export default async function DashboardPage() {
               )}
             </div>
           </>
+        ) : catalogState === "unknown" ? (
+          /*
+            The queue is genuinely empty but the catalog size is unknown, so we
+            cannot honestly say either "nothing exists yet" or "everything is
+            done". Neutral, with a way to retry — not an empty state, and not a
+            red card, because nothing on this card actually failed.
+          */
+          <div className="flex flex-col gap-2 px-6 pb-6">
+            <p className="card__sub-line">
+              Couldn&apos;t confirm the catalog size, so there may be more to
+              show here.
+            </p>
+            <div>
+              <Button asChild variant="outline">
+                <Link href="/">Try again</Link>
+              </Button>
+            </div>
+          </div>
+        ) : catalogState === "empty" ? (
+          <div className="flex flex-col gap-3 px-6 pb-6">
+            <p className="text-body text-text">No books yet</p>
+            <p className="card__sub-line">
+              Create a book to start tracking scripts and narration audio.
+            </p>
+            <div>
+              <Button asChild>
+                <Link href="/books/new">New Story</Link>
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2 px-6 pb-6">
+            <span className="status-pill status-pill--ok w-fit">
+              Everything is complete
+            </span>
+            <p className="card__sub-line">
+              Every chapter across your catalog has a script and narration
+              audio.
+            </p>
+          </div>
         )}
       </div>
 
@@ -159,7 +203,11 @@ export default async function DashboardPage() {
         </div>
         {!activity.ok ? (
           <div className="px-6 pb-6">
-            <QueryErrorCard message={activity.error} retryHref="/" />
+            <QueryErrorCard
+              message={activity.error}
+              kind={activity.kind}
+              retryHref="/"
+            />
           </div>
         ) : activity.data.length === 0 ? (
           <p className="card__sub-line px-6 pb-6">No recent activity.</p>

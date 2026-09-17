@@ -34,9 +34,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { deleteChapter, updateChapterAccess } from "@/app/actions/chapters";
 import { bookAudioProgress, bookChapterProgress, formatDuration } from "@/lib/catalog";
-import type { Chapter, ChapterAccess } from "@/types/catalog";
+import type { ChapterAccess, ChapterListItem } from "@/types/catalog";
 
-const columnHelper = createColumnHelper<Chapter>();
+// ChapterListItem, not Chapter: this table renders word counts and presence,
+// never chapter prose. See AGENTS.md, Performance Rules.
+const columnHelper = createColumnHelper<ChapterListItem>();
 
 export function ChaptersCard({
   bookId,
@@ -45,12 +47,14 @@ export function ChaptersCard({
   onChanged,
 }: {
   bookId: string;
-  chapters: Chapter[];
+  chapters: ChapterListItem[];
   onAddChapter: () => void;
   onChanged: () => void;
 }) {
   const router = useRouter();
-  const [pendingDelete, setPendingDelete] = useState<Chapter | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<ChapterListItem | null>(
+    null,
+  );
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, startDeleting] = useTransition();
 
@@ -68,7 +72,7 @@ export function ChaptersCard({
   const scriptProgress = useMemo(() => bookChapterProgress(chapters), [chapters]);
   const audioProgress = useMemo(() => bookAudioProgress(chapters), [chapters]);
 
-  function handleToggleAccess(chapter: Chapter) {
+  function handleToggleAccess(chapter: ChapterListItem) {
     const current = optimisticAccess[chapter.id] ?? chapter.access;
     const next: ChapterAccess = current === "free" ? "locked" : "free";
 

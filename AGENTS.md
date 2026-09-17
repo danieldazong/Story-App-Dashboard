@@ -227,6 +227,20 @@ Controller → useController → register → updateValidAndValue
 
 **Related React behaviour worth knowing: a component passed as a prop is rendered by the receiver but owned by the sender.** `<PageHeader action={<SaveButton />} />` creates `SaveButton` in the parent's render but renders it inside `PageHeader`. When it subscribes to external state, React attributes its updates to the *sender*. This is why these warnings routinely name two components that look unrelated to the actual call site — and why the component names in the message are a weak signal compared to the expanded stack.
 
+### A failed read must not become a confident lie
+
+The Dashboard once rendered `Could not count missing audio:` — a context string, a colon, and nothing at all — while the card below it announced **"No books yet"** over a catalog of two books whose activity was listed underneath. One dropped packet, two distinct defects. Both are now fixed; the reasoning is what matters when the next one appears.
+
+**An empty message is not a message.** postgrest-js surfaces a caught transport failure as an error object whose body it never got to read, so `.message` can be `""`. Any `` `${context}: ${error.message}` `` template turns that into a visibly broken sentence. `describeDbError` in `lib/db-errors.ts` guards it. Note the ordering inside that function: **code tests run before the empty-message check**, because an error can carry `42501` *and* no message, and that is a permission problem, not a connectivity one.
+
+**Translate errors once, for reads and writes alike.** `describeDbError` used to live in `app/actions/types.ts`, which made it reachable only by Server Actions — so every read in `lib/queries.ts` rendered raw Postgres strings straight to the operator. It lives in `lib/db-errors.ts` now and `types.ts` re-exports it. If a file in the actions folder ever gains `"use server"`, a pure synchronous function exported from it silently becomes an async RPC stub; that is why the shared layer belongs in `lib/`.
+
+**Never collapse "unknown" into "empty".** `hasBooks = counts.ok && counts.data.books > 0` treats a *failed* count exactly like a count of zero. The fix is three states, not two (`"unknown" | "empty" | "populated"`), and — more durably — **ordering the render so data that did arrive wins**: the Dashboard now checks `attention.data.length > 0` *before* it consults the catalog size, which makes the card structurally incapable of claiming emptiness beside a populated table. Prefer that kind of fix to a guard, because a guard can be forgotten and an ordering cannot.
+
+**Retry transport failures only, and only in the read path.** `withRetry` in `lib/queries.ts` retries once, after ~250ms, when the message is empty or network-shaped. A permission denial is deterministic — retrying it wastes a round trip and delays an error the operator needs now. It is deliberately **not** installed on the Supabase client's `fetch`: that would silently retry *writes*, and replaying a non-idempotent insert after an ambiguous timeout is how a book ends up with two copies of chapter one.
+
+**Don't let an error card guess.** `QueryErrorCard` used to assert "your account may not have operator access to this data" on every failure, which sent an operator to audit Clerk roles in response to a Cloudflare routing blip. It now varies by `DbErrorKind` and, for an unclassifiable error, says nothing beyond the translated message. Saying nothing beats guessing wrong.
+
 ### Debugging "this looks like our bug but is actually the network"
 
 Several failures on this project presented as application errors and were not. Before changing code in response to a `fetch`/auth/load failure, check reachability from the machine itself:
@@ -854,7 +868,20 @@ Rule: revalidate the routes the mutation actually affects and that the operator 
 
 ### Don't ship columns the page never renders
 
-`getBooks` deliberately omits `script_text` and documents why. The same discipline applies per-route: `/books/[bookId]` renders only `script.state` and `script.wordCount`, never `script.text`, yet `getChapters` selects `*` — shipping every chapter's full prose to a page that displays word counts. Measured: 895ms with `script_text`, 501ms without.
+`getBooks` deliberately omits `script_text` and documents why. The same discipline applies per-route: `/books/[bookId]` renders only `script.state` and `script.wordCount`, never `script.text`, yet `getChapters` selected `*` — shipping every chapter's full prose to a page that displays word counts.
+
+Fixed by the `chapters_list` view (migration `20260917000003`), which omits `script_text` and counts words in Postgres. Measured on two real 10-chapter books:
+
+| | bytes | time |
+|---|---|---|
+| `chapters` `select *` | 1,044,123 | 1510ms / 1222ms |
+| `chapters_list` | 10,223 | 538ms / 533ms |
+
+**99% less transferred.** The win is in transfer, not database work — Postgres still reads `script_text` to count words. That is the right trade when the wire is the bottleneck, and it is why the fix is a view rather than a stored column.
+
+**Not a stored aggregate.** The schema forbids a `word_count` column, because a persisted rollup drifts from its source. A view recomputes per read and cannot drift. The prohibition is on *storing* the aggregate, not deriving it in SQL. The view's expression mirrors `countWords()` exactly and was verified against live data (20 chapters, 0 mismatches) plus round-tripped edge cases (empty string, whitespace-only, tabs/newlines, repeated spaces) — if one changes, change both.
+
+**`ChapterListItem` is a separate type, not `Chapter` with an optional field.** An optional `text` would let a list row flow into the chapter editor and silently render an empty textarea. These shapes are not interchangeable and the compiler should enforce that.
 
 **Verify the column is unused before dropping it.** "It's slow to fetch" and "it isn't needed" are different claims and were conflated once during this pass; `toChapter` builds `script.text` from that column, so removing it naively blanks every word count.
 

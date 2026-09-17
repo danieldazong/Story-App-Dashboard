@@ -44,7 +44,12 @@ export function chapterMissingAsset(chapter: Chapter): MissingAsset | null {
   return null;
 }
 
-export function bookChapterProgress(chapters: Chapter[]): {
+// These two take the structural minimum they actually read, rather than a full
+// Chapter, so they serve both Chapter and ChapterListItem. A list item has no
+// script text, and neither of these ever needed it.
+export function bookChapterProgress(
+  chapters: { script: { state: "missing" | "ready" } }[],
+): {
   ready: number;
   total: number;
 } {
@@ -52,7 +57,9 @@ export function bookChapterProgress(chapters: Chapter[]): {
   return { ready, total: chapters.length };
 }
 
-export function bookAudioProgress(chapters: Chapter[]): {
+export function bookAudioProgress(
+  chapters: { audio: { state: "missing" | "ready" } }[],
+): {
   ready: number;
   total: number;
 } {

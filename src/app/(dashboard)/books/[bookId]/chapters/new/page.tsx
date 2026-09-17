@@ -4,7 +4,7 @@ import { Breadcrumbs } from "@/components/shell/breadcrumbs";
 import { ChapterCreateEditor } from "@/components/chapters/chapter-create-editor";
 import { QueryErrorCard } from "@/components/shell/query-error-card";
 import { serverSupabaseWithSettings } from "@/lib/server-supabase";
-import { getBook, getChapters } from "@/lib/queries";
+import { getBook, getChaptersList } from "@/lib/queries";
 
 export default async function NewChapterPage({
   params,
@@ -24,6 +24,7 @@ export default async function NewChapterPage({
         />
         <QueryErrorCard
           message={bookResult.error}
+          kind={bookResult.kind}
           retryHref={`/books/${bookId}/chapters/new`}
         />
       </div>
@@ -53,7 +54,9 @@ export default async function NewChapterPage({
     );
   }
 
-  const chaptersResult = await getChapters(
+  // Only chapter numbers are needed here, so the list view is plenty — no
+  // reason to transfer every chapter's prose to compute a next number.
+  const chaptersResult = await getChaptersList(
     client,
     book.id,
     settings.publicCdnDomain,
@@ -71,6 +74,7 @@ export default async function NewChapterPage({
         />
         <QueryErrorCard
           message={chaptersResult.error}
+          kind={chaptersResult.kind}
           retryHref={`/books/${bookId}/chapters/new`}
         />
       </div>

@@ -55,6 +55,13 @@ const config: Config = {
       },
       fontSize: {
         "page-title": ["24px", { lineHeight: "32px", fontWeight: "600" }],
+        // A heading for screens whose title is a long piece of authored content
+        // rather than a short screen name. A chapter title runs to a full line
+        // or two ("Chapter 6 · TALKING ABOUT SEX WITHOUT SHAME: THE OTHER KIND
+        // OF GOING QUIET"), which at page-title size dominates the screen it is
+        // only labelling. Still 600 weight so it reads as a heading and not as
+        // prose — it sits above `body` (14px), not among it.
+        "chapter-title": ["16px", { lineHeight: "24px", fontWeight: "600" }],
         "section-label": [
           "13px",
           { lineHeight: "16px", fontWeight: "600", letterSpacing: "0.02em" },

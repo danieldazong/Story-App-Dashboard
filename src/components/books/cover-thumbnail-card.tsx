@@ -69,10 +69,22 @@ type PendingFile = {
 
 export type CoverThumbnailCardHandle = {
   /**
+   * How many progress steps flush() will report — 1 when a cover is waiting,
+   * 0 otherwise.
+   *
+   * Called by the Create Story dialog BEFORE the flush chain starts, so the
+   * progress bar's denominator is known up front and every count it shows is
+   * real rather than estimated.
+   */
+  pendingSteps: () => number;
+  /**
    * Uploads a file picked before the book existed, against the new book id.
    * Returns silently when nothing is pending.
+   *
+   * `report` is called once per completed step, with a label naming what just
+   * finished.
    */
-  flush: (bookId: string) => Promise<void>;
+  flush: (bookId: string, report?: (label: string) => void) => Promise<void>;
 };
 
 /** Reads intrinsic dimensions so a wrong aspect ratio can be warned about. */
@@ -287,10 +299,16 @@ export const CoverThumbnailCard = forwardRef<
   }
 
   useImperativeHandle(ref, () => ({
-    async flush(newBookId: string) {
+    pendingSteps() {
+      return pendingFile ? 1 : 0;
+    },
+    async flush(newBookId: string, report?: (label: string) => void) {
       if (!pendingFile) return;
       const ok = await uploadFor(newBookId, pendingFile);
       if (ok) toast.success("Cover uploaded.");
+      // Reported even on failure: the step is over either way, and a bar that
+      // stalls on a failed step looks identical to one that hung.
+      report?.("Cover uploaded");
     },
   }));
 

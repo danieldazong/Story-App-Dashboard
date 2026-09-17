@@ -22,46 +22,14 @@ export function actionError(
 }
 
 /**
- * Turns a Supabase error into something an operator can read.
+ * Re-exported from `lib/db-errors.ts`, where the implementation now lives so
+ * that reads (`lib/queries.ts`) can share it — previously it sat here and was
+ * therefore reachable only by writes, which is why every read rendered raw
+ * Postgres strings.
  *
- * An RLS rejection must never surface as a generic failure or, worse, as a
- * silent success — see AGENTS.md. Postgres reports it as a policy violation,
- * which is meaningless to the person holding the mouse.
- *
- * A network-level failure (the underlying `fetch()` itself failing — a
- * connectivity blip, a DNS hiccup) is caught by supabase-js/postgrest-js and
- * returned as `{ error }` rather than thrown, so it reaches here looking like
- * any other database error. Its `.message` is a raw JS string like
- * `"TypeError: fetch failed"` — never let that reach the UI verbatim; it reads
- * like a stack trace to an operator who cannot act on it.
+ * Kept as a re-export so the four action files keep their existing grouped
+ * import and none of the 13 write call sites had to change. If `"use server"`
+ * is ever added to this file, this one line breaks loudly instead of thirteen
+ * call sites breaking quietly.
  */
-export function describeDbError(error: {
-  code?: string;
-  message: string;
-}): string {
-  if (error.code === "42501" || /row-level security/i.test(error.message)) {
-    return "Your account doesn't have permission to make this change.";
-  }
-  if (error.code === "23505") {
-    return "That value is already taken.";
-  }
-  if (isNetworkError(error.message)) {
-    return "Couldn't reach the database. Check your connection and try again.";
-  }
-  return error.message;
-}
-
-/**
- * Network-level failures never carry a Postgres error code, so they're matched
- * on shape instead: a bare `TypeError` (the standard shape for a failed
- * `fetch()` in both browsers and Node/undici) or the literal phrases those
- * runtimes use for a connection that never completed.
- */
-function isNetworkError(message: string): boolean {
-  return (
-    /^TypeError:\s*fetch failed/i.test(message) ||
-    /failed to fetch/i.test(message) ||
-    /network\s*(error|request failed)/i.test(message) ||
-    /ECONNREFUSED|ENOTFOUND|ETIMEDOUT/.test(message)
-  );
-}
+export { describeDbError } from "@/lib/db-errors";

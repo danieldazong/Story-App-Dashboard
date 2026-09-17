@@ -1,8 +1,19 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { toBook, toChapter } from "@/lib/catalog-mappers";
+import { toBook, toChapter, toChapterListItem } from "@/lib/catalog-mappers";
+import {
+  classifyDbError,
+  describeDbError,
+  isNetworkError,
+  type DbErrorKind,
+} from "@/lib/db-errors";
 import { SETTINGS_DEFAULTS } from "@/data/settings-defaults";
 import type { Database } from "@/types/database";
-import type { Book, Chapter, MissingAsset } from "@/types/catalog";
+import type {
+  Book,
+  Chapter,
+  ChapterListItem,
+  MissingAsset,
+} from "@/types/catalog";
 
 type Client = SupabaseClient<Database>;
 type BookRow = Database["public"]["Tables"]["books"]["Row"];
@@ -19,13 +30,71 @@ type SettingsRow = Database["public"]["Tables"]["app_settings"]["Row"];
  */
 export type QueryResult<T> =
   | { ok: true; data: T }
-  | { ok: false; error: string };
+  | { ok: false; error: string; kind: DbErrorKind };
 
-function fail(context: string, error: { message: string }): {
-  ok: false;
-  error: string;
-} {
-  return { ok: false, error: `${context}: ${error.message}` };
+/**
+ * Builds the failure arm of a QueryResult.
+ *
+ * Three things here are load-bearing, all of them fixes for a Dashboard that
+ * rendered `"Could not count missing audio: "` — a context string, a colon, and
+ * nothing at all:
+ *
+ * 1. `code` is accepted. Supabase's PostgrestError has always carried it, but
+ *    the old signature took only `{ message }`, which is why the code-based
+ *    branches (42501, 23505) were unreachable from every read in this file.
+ * 2. `describeDbError` replaces the raw `error.message`. Reads now get the same
+ *    translation writes have had since prompt 14 — an RLS denial no longer
+ *    leaks its policy string and a dropped connection no longer reads like a
+ *    stack trace.
+ * 3. A period, not a colon. A colon promises something follows it; when the
+ *    message was empty that promise was visibly broken. A full sentence
+ *    degrades gracefully even if an empty message ever slips through again.
+ */
+function fail(
+  context: string,
+  error: { code?: string; message: string },
+): { ok: false; error: string; kind: DbErrorKind } {
+  return {
+    ok: false,
+    error: `${context}. ${describeDbError(error)}`,
+    kind: classifyDbError(error),
+  };
+}
+
+/** How long to wait before the single retry below. */
+const RETRY_DELAY_MS = 250;
+
+/**
+ * Runs a read, retrying ONCE after a short delay if — and only if — it failed
+ * for a transport reason.
+ *
+ * This machine's IPv6 routing to Cloudflare drops requests intermittently
+ * (AGENTS.md, Debugging Playbooks), and one dropped packet should not blank a
+ * screen and tell an operator to check their account permissions. A single
+ * retry absorbs that.
+ *
+ * Only network-shaped failures are retried. A permission denial or a constraint
+ * violation is deterministic: retrying it wastes a round trip and delays an
+ * error the operator needs to see now.
+ *
+ * Deliberately NOT installed on the Supabase client's `fetch`. A retry there
+ * would silently apply to WRITES too, and replaying a non-idempotent insert
+ * after an ambiguous timeout is how a book ends up with two copies of chapter
+ * one. Reads are safe to repeat; writes are not. Keeping it here, in the read
+ * module, makes that boundary explicit — see AGENTS.md, Performance Rules.
+ */
+async function withRetry<T extends { error: { message: string } | null }>(
+  run: () => PromiseLike<T>,
+): Promise<T> {
+  const first = await run();
+  if (!first.error) return first;
+
+  const message = first.error.message;
+  const transient = message.trim() === "" || isNetworkError(message);
+  if (!transient) return first;
+
+  await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+  return run();
 }
 
 // ---------------------------------------------------------------------------
@@ -60,8 +129,14 @@ function settingsFromRow(row: SettingsRow): AppSettings {
   };
 }
 
-/** Constants used when no settings row exists yet. */
-function settingsFallback(): AppSettings {
+/**
+ * Constants used when no settings row exists yet, or when the settings read
+ * failed and a screen still has to render.
+ *
+ * Exported so `serverSupabaseWithSettings` uses this one definition instead of
+ * its own inline copy, which had already drifted from it.
+ */
+export function settingsFallback(): AppSettings {
   return {
     storageProvider: SETTINGS_DEFAULTS.storageProvider,
     bucketName: SETTINGS_DEFAULTS.bucketName,
@@ -89,10 +164,9 @@ function settingsFallback(): AppSettings {
 export async function getAppSettings(
   client: Client,
 ): Promise<QueryResult<AppSettings>> {
-  const { data, error } = await client
-    .from("app_settings")
-    .select("*")
-    .maybeSingle();
+  const { data, error } = await withRetry(() =>
+    client.from("app_settings").select("*").maybeSingle(),
+  );
 
   if (error) return fail("Could not load settings", error);
   return { ok: true, data: data ? settingsFromRow(data) : settingsFallback() };
@@ -122,16 +196,15 @@ export async function getBooks(
   client: Client,
   cdnDomain: string,
 ): Promise<QueryResult<BookListRow[]>> {
-  const { data: books, error: booksError } = await client
-    .from("books")
-    .select("*")
-    .order("title");
+  const { data: books, error: booksError } = await withRetry(() =>
+    client.from("books").select("*").order("title"),
+  );
 
   if (booksError) return fail("Could not load books", booksError);
 
-  const { data: chapters, error: chaptersError } = await client
-    .from("chapters")
-    .select("book_id, script_text, audio_path");
+  const { data: chapters, error: chaptersError } = await withRetry(() =>
+    client.from("chapters").select("book_id, script_text, audio_path"),
+  );
 
   if (chaptersError) return fail("Could not load chapters", chaptersError);
 
@@ -165,11 +238,9 @@ export async function getBook(
   bookId: string,
   cdnDomain: string,
 ): Promise<QueryResult<Book | null>> {
-  const { data, error } = await client
-    .from("books")
-    .select("*")
-    .eq("id", bookId)
-    .maybeSingle();
+  const { data, error } = await withRetry(() =>
+    client.from("books").select("*").eq("id", bookId).maybeSingle(),
+  );
 
   if (error) return fail("Could not load this book", error);
   return { ok: true, data: data ? toBook(data, cdnDomain) : null };
@@ -180,11 +251,9 @@ export async function getChapters(
   bookId: string,
   cdnDomain: string,
 ): Promise<QueryResult<Chapter[]>> {
-  const { data, error } = await client
-    .from("chapters")
-    .select("*")
-    .eq("book_id", bookId)
-    .order("number");
+  const { data, error } = await withRetry(() =>
+    client.from("chapters").select("*").eq("book_id", bookId).order("number"),
+  );
 
   if (error) return fail("Could not load chapters", error);
   return {
@@ -193,18 +262,59 @@ export async function getChapters(
   };
 }
 
+/**
+ * Chapters for a list, WITHOUT each chapter's prose.
+ *
+ * Reads the `chapters_list` view rather than the table: `/books/[bookId]`
+ * renders word counts and presence, never the text, and selecting `script_text`
+ * for a long serial moved megabytes across a link where one round trip already
+ * costs ~450ms (measured: 895ms with the column, 501ms without). The view counts
+ * words in Postgres, mirroring countWords() — verified against live data.
+ *
+ * Use getChapters() instead when the prose itself is needed; that is the chapter
+ * editor, and only the chapter editor.
+ */
+export async function getChaptersList(
+  client: Client,
+  bookId: string,
+  cdnDomain: string,
+): Promise<QueryResult<ChapterListItem[]>> {
+  const { data, error } = await withRetry(() =>
+    client
+      .from("chapters_list")
+      .select("*")
+      .eq("book_id", bookId)
+      .order("number"),
+  );
+
+  if (error) return fail("Could not load chapters", error);
+
+  // A row missing a column that is `not null` on the base table cannot be
+  // rendered meaningfully; the mapper returns null and it is dropped rather
+  // than widening the type for the whole app. See toChapterListItem().
+  const rows: ChapterListItem[] = [];
+  for (const row of data ?? []) {
+    const item = toChapterListItem(row, cdnDomain);
+    if (item) rows.push(item);
+  }
+
+  return { ok: true, data: rows };
+}
+
 export async function getChapter(
   client: Client,
   bookId: string,
   number: number,
   cdnDomain: string,
 ): Promise<QueryResult<Chapter | null>> {
-  const { data, error } = await client
-    .from("chapters")
-    .select("*")
-    .eq("book_id", bookId)
-    .eq("number", number)
-    .maybeSingle();
+  const { data, error } = await withRetry(() =>
+    client
+      .from("chapters")
+      .select("*")
+      .eq("book_id", bookId)
+      .eq("number", number)
+      .maybeSingle(),
+  );
 
   if (error) return fail("Could not load this chapter", error);
   return { ok: true, data: data ? toChapter(data, cdnDomain) : null };
@@ -250,12 +360,18 @@ export async function getDashboardCounts(
   client: Client,
 ): Promise<QueryResult<DashboardCounts>> {
   const [books, chapters, missingAudio] = await Promise.all([
-    client.from("books").select("*", { count: "exact", head: true }),
-    client.from("chapters").select("*", { count: "exact", head: true }),
-    client
-      .from("chapters")
-      .select("*", { count: "exact", head: true })
-      .is("audio_path", null),
+    withRetry(() =>
+      client.from("books").select("*", { count: "exact", head: true }),
+    ),
+    withRetry(() =>
+      client.from("chapters").select("*", { count: "exact", head: true }),
+    ),
+    withRetry(() =>
+      client
+        .from("chapters")
+        .select("*", { count: "exact", head: true })
+        .is("audio_path", null),
+    ),
   ]);
 
   if (books.error) return fail("Could not count books", books.error);
@@ -285,9 +401,9 @@ export type AttentionRowData = {
 export async function getNeedsAttention(
   client: Client,
 ): Promise<QueryResult<AttentionRowData[]>> {
-  const { data, error } = await client
-    .from("chapters_needing_attention")
-    .select("*");
+  const { data, error } = await withRetry(() =>
+    client.from("chapters_needing_attention").select("*"),
+  );
 
   if (error) return fail("Could not load the work queue", error);
 

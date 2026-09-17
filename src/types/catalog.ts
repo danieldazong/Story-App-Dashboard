@@ -82,6 +82,47 @@ export type Chapter = {
   updatedAt: ChapterRow["updated_at"];
 };
 
+// ---------------------------------------------------------------------------
+// List shapes — the same chapters, without the prose
+// ---------------------------------------------------------------------------
+
+/**
+ * A chapter's script as a LIST sees it: present or absent, and how long — but
+ * not the text itself.
+ *
+ * `/books/[bookId]` renders only `state` and `wordCount`; the full prose is
+ * needed by exactly one screen, the chapter editor. Selecting it for a list
+ * moved megabytes for a long serial (see the chapters_list view migration), so
+ * the list reads a view that omits `script_text` and counts words in Postgres.
+ *
+ * Deliberately a separate type rather than making `text` optional on
+ * ScriptAsset: an optional field would let a list item flow into a screen that
+ * needs the prose and silently render an empty editor. These two shapes are not
+ * interchangeable and the compiler should say so.
+ */
+export type ScriptSummary =
+  | { state: "missing" }
+  | {
+      state: "ready";
+      fileName: NonNullable<ChapterRow["script_file_name"]>;
+      // Computed by the chapters_list view, mirroring countWords() in
+      // lib/catalog.ts. Never stored on the chapters table — see the schema's
+      // "No stored aggregates" note.
+      wordCount: number;
+    };
+
+/** A chapter row for tables and counts. Carries no script text. */
+export type ChapterListItem = {
+  id: ChapterRow["id"];
+  bookId: ChapterRow["book_id"];
+  number: ChapterRow["number"];
+  title: ChapterRow["title"];
+  script: ScriptSummary;
+  audio: AudioAsset;
+  access: ChapterAccess;
+  updatedAt: ChapterRow["updated_at"];
+};
+
 // NOT derived from the `chapters_needing_attention` view, deliberately.
 //
 // The view's `missing` column generates as `string | null`: Postgres types a

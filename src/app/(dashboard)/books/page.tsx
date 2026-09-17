@@ -25,7 +25,11 @@ export default async function BooksPage() {
       {result.ok ? (
         <BooksTable rows={result.data} />
       ) : (
-        <QueryErrorCard message={result.error} retryHref="/books" />
+        <QueryErrorCard
+          message={result.error}
+          kind={result.kind}
+          retryHref="/books"
+        />
       )}
     </div>
   );
