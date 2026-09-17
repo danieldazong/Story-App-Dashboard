@@ -63,9 +63,20 @@ export const ChapterComposer = forwardRef<
     defaultAccess: ChapterAccess;
     existingNumbers: number[];
     onCreate: () => void;
+    /** From app_settings, for the Narration card's constraint line. */
+    acceptedAudioFormats: string[];
+    maxAudioSizeMb: number;
   }
 >(function ChapterComposer(
-  { bookId, nextNumber, defaultAccess, existingNumbers, onCreate },
+  {
+    bookId,
+    nextNumber,
+    defaultAccess,
+    existingNumbers,
+    onCreate,
+    acceptedAudioFormats,
+    maxAudioSizeMb,
+  },
   ref,
 ) {
   const [numberTaken, setNumberTaken] = useState<number | null>(null);
@@ -231,10 +242,18 @@ export const ChapterComposer = forwardRef<
       </div>
 
       <div className="col-span-1 flex flex-col gap-6">
+        {/*
+          Preview only, deliberately. Narration upload happens on the Chapter
+          editor and nowhere else (prompt 16, and AGENTS.md's single-upload-
+          surface rule) — this card holds a locally-chosen file so the operator
+          can see what they picked while composing the first chapter.
+        */}
         <NarrationAudioCard
           preview={audioPreview}
           onFileSelected={setAudioPreview}
           onRemove={() => setAudioPreview(null)}
+          acceptedFormats={acceptedAudioFormats}
+          maxSizeMb={maxAudioSizeMb}
         />
 
         <div className="flex flex-col gap-4">

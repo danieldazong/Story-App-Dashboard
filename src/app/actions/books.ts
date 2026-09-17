@@ -140,13 +140,26 @@ export async function deleteBook(bookId: string): Promise<ActionResult> {
 
   const client = await serverSupabase();
 
-  // Read the title first so the activity message can name it — the row is gone
-  // by the time the log is written.
-  const { data: book } = await client
-    .from("books")
-    .select("title")
-    .eq("id", bookId)
-    .maybeSingle();
+  // Everything needed AFTER the delete has to be read BEFORE it.
+  //
+  // Chapters cascade via the foreign key the instant the book row goes, so
+  // their audio paths become unrecoverable — which is exactly how this used to
+  // leak: the code looked for files only after the references had vanished.
+  // The title is read here for the same reason, so the activity line can name
+  // the book. Both reads are independent, so they share one round trip.
+  const [bookRead, chapterRead] = await Promise.all([
+    client.from("books").select("title, cover_path").eq("id", bookId).maybeSingle(),
+    client
+      .from("chapters")
+      .select("audio_path")
+      .eq("book_id", bookId)
+      .not("audio_path", "is", null),
+  ]);
+
+  const book = bookRead.data;
+  const audioPaths = (chapterRead.data ?? [])
+    .map((row) => row.audio_path)
+    .filter((path): path is string => path !== null);
 
   const { error, count } = await client
     .from("books")
@@ -160,9 +173,40 @@ export async function deleteBook(bookId: string): Promise<ActionResult> {
     );
   }
 
-  // Chapters cascade via the foreign key; storage objects do not. Cover and
-  // audio files for this book remain in storage until the upload prompts add a
-  // path-aware cleanup — flagged in AGENTS.md rather than silently leaked.
+  // Row first, then objects — deliberately, and the same ordering setBookCover
+  // and setChapterAudio use. Deleting files first would risk a book that still
+  // exists but renders broken media; this way a storage failure can only ever
+  // orphan a file, which is recoverable.
+  //
+  // A failed delete is logged and tolerated rather than failing the action: the
+  // book IS gone, and reporting failure would tell the operator their deletion
+  // did not happen when it did.
+  if (book?.cover_path) {
+    const { error: coverError } = await client.storage
+      .from("covers")
+      .remove([book.cover_path]);
+    if (coverError) {
+      console.warn(
+        `Book deleted but its cover was not removed (${book.cover_path}): ${coverError.message}`,
+      );
+    }
+  }
+
+  if (audioPaths.length > 0) {
+    const { error: audioError } = await client.storage
+      .from("audio")
+      .remove(audioPaths);
+    if (audioError) {
+      console.warn(
+        `Book deleted but ${audioPaths.length} narration file(s) were not removed: ${audioError.message}`,
+      );
+    }
+  }
+
+  // No `scripts` cleanup: nothing in this codebase writes to that bucket yet
+  // (script text lives on the chapter row, and `script_path` is never
+  // populated). Add it here when prompt 17 starts storing source files, rather
+  // than writing speculative cleanup for a path that does not exist.
   await logActivity(
     client,
     actorId,

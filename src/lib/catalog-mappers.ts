@@ -58,19 +58,28 @@ export function toScriptAsset(row: ChapterRow): ScriptAsset {
 /**
  * `audio_path is null` means narration is missing.
  *
- * `audio_duration_source` is carried through so the Chapter editor keeps
- * rendering `Detected` versus `Edited` correctly — detection can report
- * Infinity/NaN, in which case the operator's manual value is authoritative.
+ * `audio_duration_source` is carried through so the Chapter editor renders
+ * `Detected`, `Edited`, or neither: detection can report Infinity/NaN, and a
+ * file whose duration was never measured has no source at all. Null is a real
+ * third state, not a missing value to paper over.
+ *
+ * Takes no `cdnDomain`: the audio bucket is private, so there is no public URL
+ * to build. The path travels instead and playback signs it on demand.
  */
-export function toAudioAsset(row: ChapterRow, cdnDomain: string): AudioAsset {
+export function toAudioAsset(row: ChapterRow): AudioAsset {
   if (!row.audio_path) return { state: "missing" };
   return {
     state: "ready",
     fileName: row.audio_file_name ?? row.audio_path.split("/").pop() ?? "audio",
     sizeBytes: row.audio_size_bytes ?? 0,
-    durationSeconds: row.audio_duration_seconds ?? 0,
-    durationSource: row.audio_duration_source ?? "detected",
-    url: storageUrl(cdnDomain, "audio", row.audio_path),
+    // Nulls pass straight through. These previously coerced to `0` and
+    // `"detected"`, which turned "we never measured this" into "we measured it
+    // and it is zero seconds" — see the comment on AudioAsset.
+    durationSeconds: row.audio_duration_seconds,
+    durationSource: row.audio_duration_source,
+    // The path, not a URL: the audio bucket is private, so a public URL does
+    // not serve. See the comment on AudioAsset.
+    path: row.audio_path,
   };
 }
 
@@ -91,14 +100,17 @@ export function toBook(row: BookRow, cdnDomain: string): Book {
   };
 }
 
-export function toChapter(row: ChapterRow, cdnDomain: string): Chapter {
+// No `cdnDomain`: a chapter's script is plain text on the row and its audio is
+// a private-bucket path signed on demand, so nothing here builds a public URL.
+// Books still take one — covers are public and do.
+export function toChapter(row: ChapterRow): Chapter {
   return {
     id: row.id,
     bookId: row.book_id,
     number: row.number,
     title: row.title,
     script: toScriptAsset(row),
-    audio: toAudioAsset(row, cdnDomain),
+    audio: toAudioAsset(row),
     access: row.access,
     updatedAt: row.updated_at,
   };
@@ -122,7 +134,6 @@ type ChapterListRow = Database["public"]["Views"]["chapters_list"]["Row"];
  */
 export function toChapterListItem(
   row: ChapterListRow,
-  cdnDomain: string,
 ): ChapterListItem | null {
   if (
     row.id === null ||
@@ -141,7 +152,7 @@ export function toChapterListItem(
     number: row.number,
     title: row.title,
     script: toScriptSummary(row),
-    audio: toAudioAssetFromList(row, cdnDomain),
+    audio: toAudioAssetFromList(row),
     access: row.access,
     updatedAt: row.updated_at,
   };
@@ -169,17 +180,17 @@ function toScriptSummary(row: ChapterListRow): ScriptSummary {
  * ChapterRow and is used where columns are known non-null, and loosening it
  * would push view-shaped uncertainty onto the chapter editor's path too.
  */
-function toAudioAssetFromList(
-  row: ChapterListRow,
-  cdnDomain: string,
-): AudioAsset {
+function toAudioAssetFromList(row: ChapterListRow): AudioAsset {
   if (!row.audio_path) return { state: "missing" };
   return {
     state: "ready",
     fileName: row.audio_file_name ?? row.audio_path.split("/").pop() ?? "audio",
     sizeBytes: row.audio_size_bytes ?? 0,
-    durationSeconds: row.audio_duration_seconds ?? 0,
-    durationSource: row.audio_duration_source ?? "detected",
-    url: storageUrl(cdnDomain, "audio", row.audio_path),
+    // Same as toAudioAsset: an unmeasured duration stays null rather than
+    // becoming a confident zero, and the private bucket means a path rather
+    // than a URL.
+    durationSeconds: row.audio_duration_seconds,
+    durationSource: row.audio_duration_source,
+    path: row.audio_path,
   };
 }

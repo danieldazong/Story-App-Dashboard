@@ -49,8 +49,15 @@ export function ChapterEditorScriptCard({
   // One value rather than two booleans, deliberately: "both collapsed" would
   // leave an empty card, and this makes that state unrepresentable instead of
   // something every toggle has to guard against.
+  // Preview starts collapsed unless the text already carries markup.
+  //
+  // With no markup the two panes render identical prose, so the split just
+  // halves the editing width for nothing. Opening full-width by default and
+  // expanding only when there is formatting to see means the preview costs
+  // space exactly when it earns it. Any toolbar use also expands it — see
+  // applyMark.
   const [collapsed, setCollapsed] = useState<"none" | "editor" | "preview">(
-    "none",
+    () => (/\*\*|_[^_]+_|^##\s/m.test(scriptText) ? "none" : "preview"),
   );
   const wordCount = countWords(scriptText);
   const blocks = parseScript(scriptText);
@@ -113,6 +120,8 @@ export function ChapterEditorScriptCard({
 
     onScriptTextChange(result.value);
     setSelection({ start: result.selectionStart, end: result.selectionEnd });
+    // Applying a mark is the moment the preview becomes worth its width.
+    setCollapsed((current) => (current === "preview" ? "none" : current));
     requestAnimationFrame(() => {
       textarea.focus();
       textarea.setSelectionRange(result.selectionStart, result.selectionEnd);

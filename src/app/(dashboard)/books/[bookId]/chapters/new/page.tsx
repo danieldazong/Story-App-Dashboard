@@ -56,11 +56,7 @@ export default async function NewChapterPage({
 
   // Only chapter numbers are needed here, so the list view is plenty — no
   // reason to transfer every chapter's prose to compute a next number.
-  const chaptersResult = await getChaptersList(
-    client,
-    book.id,
-    settings.publicCdnDomain,
-  );
+  const chaptersResult = await getChaptersList(client, book.id);
 
   if (!chaptersResult.ok) {
     return (
@@ -91,6 +87,8 @@ export default async function NewChapterPage({
       nextNumber={nextNumber}
       defaultAccess={book.defaultChapterAccess}
       existingNumbers={bookChapters.map((c) => c.number)}
+      acceptedAudioFormats={settings.acceptedAudioFormats}
+      maxAudioSizeMb={settings.maxAudioSizeMb}
     />
   );
 }

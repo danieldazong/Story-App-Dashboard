@@ -66,9 +66,33 @@ export type AudioAsset =
       state: "ready";
       fileName: NonNullable<ChapterRow["audio_file_name"]>;
       sizeBytes: NonNullable<ChapterRow["audio_size_bytes"]>;
-      durationSeconds: NonNullable<ChapterRow["audio_duration_seconds"]>;
-      durationSource: DurationSource;
-      url: string;
+      // Nullable, both of them, and deliberately so.
+      //
+      // `loadedmetadata` reports Infinity or NaN for some encodings, so a file
+      // can be validly in storage with no duration ever measured. That is a
+      // third state — neither `detected` nor `manual` — and the mappers used to
+      // hide it by coercing `?? 0` and `?? "detected"`, which rendered an
+      // unmeasured file as "Duration 0:00 · Detected": a confident claim about
+      // a measurement that never happened.
+      //
+      // Null here means "not detected". The card renders a warn pill and the
+      // Edit duration link so an operator can supply the real value. The
+      // database columns were already nullable; only this type was lying.
+      durationSeconds: ChapterRow["audio_duration_seconds"];
+      durationSource: DurationSource | null;
+      /**
+       * The storage path, not a URL.
+       *
+       * The `audio` bucket is private (unlike `covers`), so a
+       * `/object/public/audio/...` URL returns 400 — verified against the live
+       * project. Playback needs a signed URL, which only the server can mint,
+       * so the path travels and the one screen that actually streams audio
+       * exchanges it for a signed URL on demand.
+       *
+       * Carrying the path also removes the need to parse a path back out of a
+       * URL string when replacing an object.
+       */
+      path: NonNullable<ChapterRow["audio_path"]>;
     };
 
 export type Chapter = {

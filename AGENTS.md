@@ -40,7 +40,7 @@ Use the following stack:
 - Clerk for authentication (`@clerk/nextjs`), admin role enforced
 - Supabase PostgreSQL for data (`@supabase/supabase-js`)
 - Supabase Storage for media, buckets `audio/`, `covers/`, `scripts/`
-- `tus-js-client` or Uppy for resumable large-file uploads
+- `tus-js-client` for resumable large-file uploads — **installed and in use** as of prompt 16 (`^4.3.1`, ships its own types). Chosen over Uppy, which brings its own dashboard UI and DOM that would fight the cards already built to the design system; `tus-js-client` is the protocol client alone. See Prompt Series Notes for the three settings that are load-bearing.
 - Server Actions or Route Handlers for anything requiring privileged access
 
 Do not introduce new major libraries unless there is a strong reason.
@@ -251,6 +251,25 @@ Several failures on this project presented as application errors and were not. B
 
 **But check whether the app handles it gracefully, which is a separate question.** The `fetch failed` incident revealed two genuine defects worth fixing even though the trigger was environmental: `describeDbError` leaked a raw `TypeError` string to the operator, and the cover upload hung forever at `0.0 KB` because no timeout guarded a Server Action call that could never resolve. A transient network fault is not your bug; silently hanging or showing a stack trace in response to one is.
 
+### Leave a way out of every terminal state
+
+The Manuscript card had two states — `unreadable` and `too-few-sections` — that rendered a message and **no control at all**. The file input is hidden, the Discard/Confirm row only exists in the `preview` branch, and `reset()` was bound to nothing visible. A page reload was the only escape.
+
+It was the only component in the codebase with this defect: the other three dashed drop zones and `chapter-script-card` all keep their picker mounted in every reachable state, disabling it rather than removing it.
+
+**Make the control structural, not per-state.** The fix renders the picker once for every state except the transient `extracting`, so a fourth terminal state added later inherits the way out instead of recreating the trap. A button added to each branch individually is a fix that the next branch forgets.
+
+Two related rules worth carrying:
+
+- **Re-picking the same file must work.** `event.target.value = ""` on every change means an operator who fixed the file on disk can select it again and still get an `onChange`.
+- **An escape hatch is not a reason to reword the guidance.** "No chapter breaks found. Add chapters one at a time in the Chapter script card instead." stayed verbatim; the button added an option rather than replacing the advice.
+
+### An in-app way back, on every screen deep enough to need one
+
+Breadcrumbs are real links (`Breadcrumbs` renders any non-final item with an `href` as a `<Link>`), but muted inline text does not read as a control — operators reached for the browser's back button instead. The Chapter editor and New chapter screens render `← Back to <book>` under the breadcrumb, matching `← Back to Settings` in `app/account/`. `PageHeader` takes an optional `backLink` prop for screens that compose through it.
+
+**Not an arrow icon button.** `ChevronLeft`/`ChevronRight` already mean *previous/next chapter* in the Chapter settings card; a second left-arrow meaning something else is a genuine ambiguity, not a style preference. The same reasoning picked `PanelLeftClose`/`PanelRightClose` for the editor/preview collapse controls.
+
 ### Known implementation defects — fix, do not replicate
 
 - **Chapters table column misalignment** — Text, Audio and Access header cells must share one column definition with their body cells so values line up under their own headers, not bunched under Title. The action column is fixed-width and right-aligned so `⋯` and `>` sit on a single vertical axis for every row.
@@ -345,7 +364,9 @@ Footer book count.
 
 **A3 · Book editor (create and edit)**
 
-One shared component drives both a book's creation and its editing — there is no separate "New book" screen design. The two modes differ only in the table below; everything else (layout, card order, field order, helper lines, dimensions, spacing) is identical, so an operator sees the whole shape of a book, including its Chapters card, on first visit.
+One shared component drives both a book's creation and its editing — there is no separate "New book" screen design. Layout, card order, field order, helper lines, dimensions and spacing are identical across both modes, so an operator sees the whole shape of a book, including its Chapters card, on first visit.
+
+The table below is the full set of differences. **Note the chapter composer is create-mode only** — that is the one place where card *composition* differs, not just field state; see the UX pass in Prompt Series Notes for why.
 
 | field            | create               | edit           |
 | ---------------- | -------------------- | -------------- |
@@ -355,7 +376,7 @@ One shared component drives both a book's creation and its editing — there is 
 | status field     | not shown (see below)| shown, live    |
 | cover card       | live (local-only)    | live           |
 | manuscript card  | live (local-only)    | live           |
-| chapter composer | live (local-only)    | live           |
+| chapter composer | live                 | **not shown**  |
 | chapters card    | live (local-only)    | live           |
 
 Every card is live in create mode, including before the book has an id — none of them lock. This reverses the original locked-card design (kept below for history and because Project Rules' governing rule about needing a saved parent row before a real upload still holds — it's just that nothing in this app performs a real upload yet). Each card that looks like a file upload is actually client-side-only today: Cover previews a picked image via `URL.createObjectURL` with nothing sent anywhere; Manuscript and the composer's Chapter script both extract file contents entirely in the browser (`file.text()` for `.txt`/`.md`, `mammoth` for `.docx`, see Upload Rules); Narration audio reads a picked file's metadata client-side. None of this needs a saved parent row because none of it writes to storage — see "Local-only chapter creation" below for the equivalent reasoning applied to chapter creation itself.
@@ -819,7 +840,25 @@ Standard uploads are fine — covers are small. Still upload direct-to-storage r
 
 `.txt`, `.docx` and `.md`. **PDF is not an accepted script format anywhere in this app** — not the Chapter editor, not the Manuscript card, not bulk import. PDF encodes fixed page layout rather than document structure, so extraction bleeds headers, footers, page numbers and column breaks into the prose and corrupts hyphenated line breaks. The mobile reader reflows text at three type sizes and stores a character offset for parity; corrupted extraction silently corrupts every bookmark in the chapter. Do not widen the accepted-formats list to include it.
 
-Parse server-side, store the extracted text on the chapter row, and keep the original file in `scripts/` for reference. As of this codebase's current state, this is done client-side instead, via `src/lib/docx.ts` (`.txt`/`.md` via a plain text read, `.docx` via the `mammoth` browser build's `extractRawText`, dynamically imported so the parser only loads when a `.docx` is actually picked) — see Prompt Series Notes. This is a stopgap until a real upload path and server-side parsing exist: today the extracted text lives only in client state, is not persisted, and there is no original file kept anywhere in storage.
+Parse server-side, store the extracted text on the chapter row, and keep the original file in `scripts/` for reference. Where this codebase actually stands, as of prompt 15 plus the UX pass:
+
+- **Extraction is client-side**, via `src/lib/docx.ts` (`.txt`/`.md` by plain text read, `.docx` by the `mammoth` browser build's `extractRawText`, dynamically imported so the parser loads only when a `.docx` is picked). Still a stopgap; server-side parsing is prompt 17's job.
+- **The extracted text IS persisted.** `createChapter` and `updateChapter` write `script_text`, and the chapter editor seeds from `chapter.script.text`. (An earlier revision of this note said the text "lives only in client state" — that stopped being true at prompt 14.)
+- **No original file is kept anywhere.** Nothing writes to the `scripts/` bucket; the `script_path` column exists and is never populated. `script_file_name` records the name only. So a `.docx` whose extraction went badly cannot be re-parsed later — the source is gone the moment the operator navigates away.
+
+### Script formatting and the preview pane
+
+The Chapter editor's toolbar emits exactly three marks — `**bold**`, `_italic_`, `## heading` — parsed and rendered by `lib/script-markup.ts`.
+
+**`script_text` stays plain Markdown. Do not change what is stored.** The mobile reader consumes that column directly (see the RLS migration's comment on `chapters_select`). A true WYSIWYG editor storing HTML or editor-specific JSON would break the reader silently, from a codebase that cannot see or test it. That constraint is why the formatting is shown in a **rendered preview beside** the textarea rather than by replacing the editing surface — a `<textarea>` renders plain text and nothing else, so no amount of styling makes `**bold**` appear bold inside one.
+
+**The renderer is hand-rolled, and deliberately so.** Three marks did not justify a Markdown dependency, which would also bring syntax the reader may not support. It parses to data (`ScriptBlock[]`), and the preview renders **React elements, never `dangerouslySetInnerHTML`** — this prose arrives from uploaded DOCX files and pasted clipboard content, so it is untrusted input on a page carrying an admin session.
+
+**Toolbar buttons toggle, and reflect the selection.** `hasMark` drives an active state; a second click unwraps. Before this, clicking Bold on bold text produced `****text****`. Both selection shapes are handled — text inside the markers and text including them.
+
+**A regex parser with offset arithmetic typechecks cleanly while being wrong.** This one was verified against 19 cases (nested `**bold _both_**`, unmatched `**` left literal, both toggle-off shapes, heading on a middle line, round-trips) before being trusted. Do the same to anything that touches those offsets.
+
+**The clipboard button copies; it must never write into the document.** It previously read the *system* clipboard and replaced the selection with it — with an empty clipboard that destroyed the operator's highlighted text, and the `focus()` afterwards scrolled the page. It calls `writeText(selection)` now, mutates nothing, and moves no focus.
 
 ### Audio duration
 
@@ -847,6 +886,18 @@ Two measurements that redirected the whole performance pass, and why:
 - **A `HEAD` request (near-zero server work) took 1244ms — longer than a real `select *` at 472ms.** Connection setup, not query work, dominates. That is the signature of an undersized instance, not a distant one.
 
 The conclusion to carry: on `t3.nano`, **instance size outranks every code-level fix**. Say so plainly rather than shipping refactors that cannot deliver what the numbers allow.
+
+### Show progress by counting real work, never by estimating
+
+Creating a story runs `createBook`, then a cover upload, then one `createChapter` per manuscript chapter, then the composer's chapter — sequential by necessity, since chapter numbers race for the `(book_id, number)` unique constraint otherwise. On this database that is ~11 round trips at roughly a second each behind a single unchanging `Saving…`.
+
+`CreateBookDialog` now shows a step-counted bar. The rule that makes it honest: **the denominator is collected before any work starts** — each card exposes `pendingSteps()` alongside `flush()` — and the numerator only moves when a round trip has actually returned. `4 of 12` is a report, not a prediction.
+
+**`pendingSteps()` must use the same test its own `flush()` uses.** The composer checks `title.trim()` in both; the manuscript card counts `sections.length` in both. Otherwise the bar promises work that never happens.
+
+Steps report **even on failure** — a bar frozen mid-way is indistinguishable from one that hung, which is the problem it exists to solve. And it holds at 100% with a final label rather than vanishing, because `router.push` takes a moment and a bar that disappears at 99% reads as a crash.
+
+No smooth animated percentage: between real milestones that motion is invented, and observed steps vary from ~1s to ~2.4s, so it would stall and jump.
 
 ### Never pay for the same data twice
 
@@ -1204,11 +1255,53 @@ Now `Confirm` and `Create chapter` stay enabled in create mode and hold their wo
 
 **One real, narrow consequence of that was fixed: cover upload could hang forever with no visible failure.** When Clerk's session is unavailable (script load failure, or any other upstream stall), `createCoverUploadUrl`'s promise never resolves, so the upload progress bar sat at its initial `0.0 KB` state indefinitely — waiting on a promise that was never going to settle, rather than reaching the card's own `failed` state (which already existed and already renders correctly for other failure modes). Fixed in `cover-thumbnail-card.tsx`: `uploadFor` now wraps its whole body in `try/catch` and races both Server Action calls (`createCoverUploadUrl`, `setBookCover`) against a 20-second `withTimeout` helper, so a stalled upstream dependency reaches `{ status: "failed" }` with a specific message and the existing `Retry` action, instead of hanging. This is a general resilience fix — it protects against any stall (auth, network, server), not specifically against Clerk's load failure.
 
-**Open questions from prompt 21, flagged and not resolved in code:**
+**Open questions from prompt 21 — now resolved, see the UX pass below:**
 
-1. Delete `/books/<id>/chapters/new`, or keep it as a deep-link surface that renders the same composer cards? Currently kept, unlinked.
-2. Two ember buttons now exist on the book editor screen (`Create Story` in the page header, `Create chapter` at the foot of the Chapter settings card) — the design system's "exactly one ember button per screen" rule is violated. Which keeps ember? Not resolved here; both currently render ember.
-3. The formatting toolbar (Bold/Italic/H2/paste-as-plain) exists on the Chapter editor (A4) script card but is deliberately absent from the composer's script card. Intended permanently, or should the composer gain it too?
+1. ~~Delete `/books/<id>/chapters/new`, or keep it unlinked?~~ **Kept and wired.** It persists through `createChapter` and is the destination of `Add chapter` in edit mode.
+2. ~~Two ember buttons on the book editor.~~ **Resolved by consequence.** `Create chapter` left with the composer in edit mode, and `Save` renders `outline` when clean. Create mode still has two (`Create Story` + `Create chapter`) — the composer belongs there, so this is the one case left to decide.
+3. The formatting toolbar exists on the Chapter editor's script card, not the composer's. Still open, but narrower now: the composer is create-mode only, so this only affects first-chapter authoring.
+
+---
+
+### UX pass (post-prompt-15, pre-prompt-16)
+
+A review of the Book editor and Chapter editor against real content. Five changes, plus one prerequisite that had to land first.
+
+**The composer is create-mode only.** In edit mode it duplicated the whole Chapter editor — script, narration and settings cards — under the book's own form, so the book page did two unrelated jobs and ran past 3,000px before reaching the Chapters table. It stays in create mode, where it earns its place: a new story and its first chapter in one pass, with no round trip through a book id that does not exist yet.
+
+**That change had a prerequisite, and shipping without it would have been a regression.** `Add chapter` in edit mode now navigates to `/books/<id>/chapters/new` — a screen that still toasted *"Validated. Chapter creation isn't wired to a backend yet — nothing was saved."* True when written, false since prompt 14, and it sat stranded while the composer saved the identical form through `createChapter`. An operator reaching that route lost their work behind a success-coloured toast. It is wired now, with error handling and navigation into the new chapter.
+
+> The general lesson: **two surfaces for one job drift, and the neglected one rots silently.** Removing a duplicate means first checking the survivor actually works — `grep` for the action the duplicate called and confirm the other path calls it too.
+
+**A published book with no synopsis or genres now says so.** The schema permits it (none of those fields has a minimum), so nothing flagged a live book with nothing to show on its detail page and no way to be browsed. The Status field renders `Published · missing synopsis, genres.` in warn colour. Deliberately **not** validation: operators publish deliberately incomplete books, and blocking that would be wrong. Report the gap, leave the decision — the same shape as prompt 16's undetected-duration rule.
+
+**Chapter state is a row of pills, not muted helper text.** `9 chapters · 9 of 9 with text · 0 of 9 with narration`, with `status-pill--warn` on any incomplete count. It was the most useful line on the page in its least prominent position.
+
+**`Save` reports state instead of only withholding itself** — `outline` + `Saved` when clean, ember + `Save` when dirty. A disabled ember at low opacity read as a failed render.
+
+**The Chapter editor's preview starts collapsed** unless the text already contains markup, and expands on first toolbar use. With no markup both panes render identical prose, so the split halved the editing width for nothing. (The detection regex is deliberately loose and can false-positive on prose containing `snake_case`; it self-corrects and is cosmetic.)
+
+---
+
+**Prompt 16 (Audio upload, resumable)** wired real narration uploads into the `audio` bucket via `tus-js-client`, with `app/actions/audio.ts` holding four actions: `createAudioUploadUrl` (validate + mint the path), `setChapterAudio` (persist the five `audio_*` columns), `removeChapterAudio`, `discardAudioUpload` (clean up a cancelled transfer), plus `createAudioPlaybackUrl`.
+
+**The prompt's authorisation design could not work, and only a live probe revealed it.** Prompt 16 specified `createSignedUploadUrl` + the `x-signature` header. Against the live project: `x-signature` is rejected at JWT parsing (`Invalid Compact JWS`), and the same token sent as a bearer authenticates and then fails `audio_insert` with *"new row violates row-level security policy"* — a signed upload token carries no Clerk identity, so `is_admin()` is false. **The two auth models do not meet.** The browser now sends the operator's own Clerk session token, exactly as `createSupabaseClient` does everywhere else, and RLS stays the boundary. Note this project's Supabase keys are the newer non-JWT `sb_publishable_*` / `sb_secret_*` format, which the resumable endpoint also rejects at parse — so **that endpoint is unreachable from any Node script here.**
+
+**Three tus settings are load-bearing and were each a real bug when wrong:**
+
+- `chunkSize: 6 * 1024 * 1024` — Supabase's docs say *"it must be set to 6MB (for now) do not change it"*.
+- `uploadDataDuringCreation: false`. With it **true**, tus sends the first chunk as the body of the creation POST; paired with the mandatory 6 MB chunk that makes every creation request a 6 MB upload. It also meant the first 6 MB moved before `onProgress` ever fired, so progress started at a lie.
+- `storeFingerprintForResuming: false`, plus an explicit purge of stale `tus::*` keys before each upload. Fingerprints cannot work here: every attempt mints a fresh signed path, so a stored fingerprint names an upload URL whose token no longer exists. Left on, one failure made every later Retry try to **resume a dead URL** — failing inside the client with nothing in the server log and no request in the Network panel. **So resumption across a page reload is NOT achieved; Retry restarts.** Prompt 16 permits that provided it is said plainly rather than pretended.
+
+**A null duration is a third state, and the mappers were lying about it.** `loadedmetadata` reports `Infinity`/`NaN` for some encodings, so a file can be validly in storage with no duration ever measured. `toAudioAsset` coerced `?? 0` and `?? "detected"`, rendering an unmeasured file as **`Duration 00:00 · Detected`** — a confident claim about a measurement that never happened. `AudioAsset.durationSeconds` and `.durationSource` are both nullable now; the card renders a `status-warn` *Duration not detected* pill with `Edit duration` beside it, and neither badge when the source is null.
+
+**The audio bucket is private, so `AudioAsset` carries a `path`, not a `url`.** `storageUrl` builds `/object/public/…`, which returns **400** against a private bucket (measured; a signed URL returns 200 with the bytes). Playback signs on demand in the one card that streams, rather than making the mappers async — `audio.url` had exactly two readers, so the query layer never needed `Promise.all` over every row. That also deleted `audioPathFromUrl`, a helper that reverse-engineered a path out of a URL. Several `cdnDomain` parameters fell dead as a consequence and were removed: a parameter named for URL-building implies URLs are still built there.
+
+**Free-plan Supabase has a FIXED 50 MB per-file upload ceiling that no bucket setting can raise.** The `audio` bucket says 100 MB and `SETTINGS_DEFAULTS.maxAudioSizeMb` said 100, so the card advertised a limit the platform refuses and a 60 MB file failed mid-transfer with `413 Maximum size exceeded`. The default is **50** now, so oversized files are refused at selection. On Pro this becomes configurable — raise it there, or set `app_settings.max_audio_size_mb`. Prompt 16's premise of *"20 to 100 MB narration"* does not hold on the free plan.
+
+> **The debugging lesson, which is the part worth keeping.** That 413 cost four wrong diagnoses — stale fingerprints, the bucket's own size limit, the creation body, then DNS — and three Node probes that each died at `Invalid Compact JWS` before ever reaching a size check. **One click on the browser's Network → Response tab settled it: `Maximum size exceeded`.** When a failure only reproduces in the browser, ask for the response body before building another probe. A probe that cannot authenticate the way the real client does is not evidence, and reporting it as though it were is worse than having no probe at all.
+
+**`deleteBook` no longer orphans storage.** It read nothing before deleting, and chapters cascade via the foreign key the instant the book row goes — so every audio path became unrecoverable at exactly the moment it was needed. It now collects `cover_path` and every chapter `audio_path` **before** the delete (one `Promise.all`), then removes the objects after the row, tolerating and logging a failed delete rather than failing the action: the book *is* gone, and reporting failure would claim otherwise. Verified end to end against live storage — seeded a real cover and audio object, deleted the book, confirmed both objects removed. `scripts` is deliberately not cleaned up: nothing writes to that bucket yet, and speculative cleanup for an unpopulated path is worse than none.
 
 ---
 

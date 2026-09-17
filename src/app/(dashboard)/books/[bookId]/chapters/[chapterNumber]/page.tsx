@@ -55,12 +55,7 @@ export default async function ChapterEditorPage({
     );
   }
 
-  const chapterResult = await getChapter(
-    client,
-    book.id,
-    number,
-    settings.publicCdnDomain,
-  );
+  const chapterResult = await getChapter(client, book.id, number);
 
   if (!chapterResult.ok) {
     return (
@@ -121,6 +116,8 @@ export default async function ChapterEditorPage({
         previous !== null ? `/books/${book.id}/chapters/${previous}` : null
       }
       nextHref={next !== null ? `/books/${book.id}/chapters/${next}` : null}
+      acceptedAudioFormats={settings.acceptedAudioFormats}
+      maxAudioSizeMb={settings.maxAudioSizeMb}
     />
   );
 }

@@ -246,10 +246,12 @@ export async function getBook(
   return { ok: true, data: data ? toBook(data, cdnDomain) : null };
 }
 
+// No `cdnDomain`: a chapter carries its script as text and its audio as a
+// private-bucket path, so nothing here builds a public URL. Books still take
+// one — covers are public. See toChapter().
 export async function getChapters(
   client: Client,
   bookId: string,
-  cdnDomain: string,
 ): Promise<QueryResult<Chapter[]>> {
   const { data, error } = await withRetry(() =>
     client.from("chapters").select("*").eq("book_id", bookId).order("number"),
@@ -258,7 +260,7 @@ export async function getChapters(
   if (error) return fail("Could not load chapters", error);
   return {
     ok: true,
-    data: (data ?? []).map((row: ChapterRow) => toChapter(row, cdnDomain)),
+    data: (data ?? []).map((row: ChapterRow) => toChapter(row)),
   };
 }
 
@@ -277,7 +279,6 @@ export async function getChapters(
 export async function getChaptersList(
   client: Client,
   bookId: string,
-  cdnDomain: string,
 ): Promise<QueryResult<ChapterListItem[]>> {
   const { data, error } = await withRetry(() =>
     client
@@ -294,7 +295,7 @@ export async function getChaptersList(
   // than widening the type for the whole app. See toChapterListItem().
   const rows: ChapterListItem[] = [];
   for (const row of data ?? []) {
-    const item = toChapterListItem(row, cdnDomain);
+    const item = toChapterListItem(row);
     if (item) rows.push(item);
   }
 
@@ -305,7 +306,6 @@ export async function getChapter(
   client: Client,
   bookId: string,
   number: number,
-  cdnDomain: string,
 ): Promise<QueryResult<Chapter | null>> {
   const { data, error } = await withRetry(() =>
     client
@@ -317,7 +317,7 @@ export async function getChapter(
   );
 
   if (error) return fail("Could not load this chapter", error);
-  return { ok: true, data: data ? toChapter(data, cdnDomain) : null };
+  return { ok: true, data: data ? toChapter(data) : null };
 }
 
 /** Previous and next chapter numbers, for the Chapter editor's nav buttons. */

@@ -140,9 +140,14 @@ export function ChaptersCard({
         cell: ({ row }) => {
           const chapter = row.original;
           if (chapter.audio.state === "ready") {
+            // A null duration means narration exists but was never measured.
+            // The check still shows — the audio IS present — but the column
+            // says so rather than printing a fabricated 0:00.
             return (
               <span className="inline-flex items-center gap-1.5 font-mono text-mono">
-                {formatDuration(chapter.audio.durationSeconds)}
+                {chapter.audio.durationSeconds === null
+                  ? "—"
+                  : formatDuration(chapter.audio.durationSeconds)}
                 <Check className="h-3.5 w-3.5 text-status-ok" />
               </span>
             );
@@ -260,11 +265,36 @@ export function ChaptersCard({
             </Button>
           </div>
         </div>
-        <p className="self-end text-helper text-muted">
-          {chapters.length} {chapters.length === 1 ? "chapter" : "chapters"} ·{" "}
-          {scriptProgress.ready} with text · {audioProgress.ready} with
-          narration
-        </p>
+        {/*
+          The production state of the whole book, in one line. This was muted
+          helper text at the bottom-right of the header — the most useful
+          information on the page, in its least prominent position. An
+          incomplete count now carries a warn pill so an unfinished book reads
+          at a glance instead of requiring a scan down the rows.
+        */}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-helper text-muted">
+            {chapters.length} {chapters.length === 1 ? "chapter" : "chapters"}
+          </span>
+          <span
+            className={
+              scriptProgress.ready === scriptProgress.total
+                ? "status-pill status-pill--ok"
+                : "status-pill status-pill--warn"
+            }
+          >
+            {scriptProgress.ready} of {scriptProgress.total} with text
+          </span>
+          <span
+            className={
+              audioProgress.ready === audioProgress.total
+                ? "status-pill status-pill--ok"
+                : "status-pill status-pill--warn"
+            }
+          >
+            {audioProgress.ready} of {audioProgress.total} with narration
+          </span>
+        </div>
       </div>
 
       {chapters.length === 0 ? (

@@ -14,8 +14,10 @@
 //     real member list exists; there is no `team_members` table by design.
 //   - SETTINGS_DEFAULTS: the fallback used by getAppSettings when the
 //     app_settings table is empty — a fresh database has no settings row, and
-//     prompt 12 forbids seeding one in a migration. Not read by any component
-//     directly except NarrationAudioCard (see its own note).
+//     prompt 12 forbids seeding one in a migration. Read by getAppSettings and
+//     settingsFallback() only; no component reads it directly any more. The
+//     audio cards took their formats and size limit from here until prompt 16
+//     threaded the real app_settings values down as required props.
 
 import type { ChapterAccess, Maturity } from "@/types/catalog";
 
@@ -79,7 +81,16 @@ export const SETTINGS_DEFAULTS = {
   storageProvider: "supabase_storage",
   bucketName: "novelnow-media",
   publicCdnDomain: "https://cdn.novelnow.app",
-  maxAudioSizeMb: 100,
+  // 50, not 100 — Supabase's Free plan has a FIXED 50 MB per-file upload
+  // ceiling that no bucket setting can raise (Storage → Settings states it
+  // outright). The audio bucket says 100 MB and the card used to advertise
+  // that, so an operator could pick a 60 MB narration, watch a transfer start,
+  // and get `413 Maximum size exceeded` from storage mid-flight.
+  //
+  // The app must not promise what the platform refuses. On Pro this becomes
+  // configurable (up to 500 GB) — raise it here, or set app_settings
+  // .max_audio_size_mb, once the plan changes.
+  maxAudioSizeMb: 50,
   acceptedAudioFormats: [".m4a", ".mp3", ".wav"],
   acceptedScriptFormats: [".txt", ".docx", ".md"],
   detectDurationAutomatically: true,

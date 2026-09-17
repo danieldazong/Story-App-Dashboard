@@ -96,9 +96,20 @@ export function BookEditorSaveButton({
     );
   }
 
+  // A clean form renders an outline "Saved" rather than a washed-out ember
+  // "Save". The disabled ember at low opacity read as a failed render rather
+  // than as a deliberate state — the button now reports where the form stands
+  // instead of only withholding itself.
+  const clean = !formState.isDirty && !pending;
+
   return (
-    <Button type="submit" form={BOOK_DETAILS_FORM_ID} disabled={disabled}>
-      {pending ? "Saving…" : "Save"}
+    <Button
+      type="submit"
+      form={BOOK_DETAILS_FORM_ID}
+      variant={clean ? "outline" : "primary"}
+      disabled={disabled}
+    >
+      {pending ? "Saving…" : clean ? "Saved" : "Save"}
     </Button>
   );
 }
@@ -118,6 +129,14 @@ export function BookDetailsForm({
     name: "shortDescription",
   });
   const synopsis = useWatch({ control: form.control, name: "synopsis" });
+  const genres = useWatch({ control: form.control, name: "genres" });
+
+  // What a reader client would find missing if this book were browsed today.
+  const publishGaps = [
+    synopsis.trim() === "" && "synopsis",
+    shortDescription.trim() === "" && "short description",
+    (genres?.length ?? 0) === 0 && "genres",
+  ].filter((gap): gap is string => typeof gap === "string");
 
   function onSubmit(values: BookDetailsValues) {
     // Create mode submits via the Create Story dialog instead (see
@@ -312,6 +331,22 @@ export function BookDetailsForm({
                   </Select>
                 </FormControl>
                 <p className="field-group__helper">Publication visibility</p>
+                {/*
+                  A published book with no synopsis or genres is live in the
+                  reader clients with nothing to show on its detail page and no
+                  way to be browsed by category. The schema permits it — none of
+                  these fields has a minimum — so nothing flagged it.
+
+                  Deliberately NOT a validation error: operators publish
+                  deliberately incomplete books, and blocking that would be
+                  wrong. This reports the gap and leaves the decision alone,
+                  the same way prompt 16 treats undetected audio duration.
+                */}
+                {field.value === "published" && publishGaps.length > 0 && (
+                  <p className="field-group__helper text-status-warn">
+                    Published · missing {publishGaps.join(", ")}.
+                  </p>
+                )}
                 <FormMessage />
               </FormItem>
             )}

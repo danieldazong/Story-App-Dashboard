@@ -56,11 +56,7 @@ export default async function BookEditorPage({
 
   // The list view, not getChapters(): this screen renders word counts and
   // presence, never chapter prose. See AGENTS.md, Performance Rules.
-  const chaptersResult = await getChaptersList(
-    client,
-    book.id,
-    settings.publicCdnDomain,
-  );
+  const chaptersResult = await getChaptersList(client, book.id);
 
   if (!chaptersResult.ok) {
     return (
@@ -78,6 +74,10 @@ export default async function BookEditorPage({
   }
 
   return (
-    <BookEditor mode={{ kind: "edit", book, chapters: chaptersResult.data }} />
+    <BookEditor
+      mode={{ kind: "edit", book, chapters: chaptersResult.data }}
+      acceptedAudioFormats={settings.acceptedAudioFormats}
+      maxAudioSizeMb={settings.maxAudioSizeMb}
+    />
   );
 }

@@ -3,8 +3,10 @@
 import { toast } from "sonner";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
-import { useState } from "react";
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { z } from "zod";
+import { createChapter } from "@/app/actions/chapters";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/shell/page-header";
 import { ChapterScriptCard } from "@/components/chapters/chapter-script-card";
@@ -27,15 +29,23 @@ export function ChapterCreateEditor({
   nextNumber,
   defaultAccess,
   existingNumbers,
+  acceptedAudioFormats,
+  maxAudioSizeMb,
 }: {
   bookId: string;
   bookTitle: string;
   nextNumber: number;
   defaultAccess: ChapterAccess;
   existingNumbers: number[];
+  /** From app_settings, for the Narration card's constraint line. */
+  acceptedAudioFormats: string[];
+  maxAudioSizeMb: number;
 }) {
   const [numberTaken, setNumberTaken] = useState<number | null>(null);
   const [scriptFileName, setScriptFileName] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+  const router = useRouter();
 
   const form = useForm<ChapterCreateValues>({
     resolver: zodResolver(chapterCreateSchema),
@@ -59,11 +69,41 @@ export function ChapterCreateEditor({
       return;
     }
     setNumberTaken(null);
-    // No server action exists yet (Clerk/Supabase land in prompts 11-18).
-    // Stay on this screen rather than fabricating a new chapter id.
-    toast.success(
-      `Validated. Chapter creation isn't wired to a backend yet — nothing was saved.`,
-    );
+    setFormError(null);
+
+    // This screen used to validate and then toast "isn't wired to a backend
+    // yet — nothing was saved", which was true when written but stopped being
+    // true in prompt 14. It sat stranded while the Chapter composer saved the
+    // identical form through createChapter, so an operator who reached this
+    // route lost their work with a success-coloured toast.
+    startTransition(async () => {
+      const text = values.scriptText?.trim() ?? "";
+      const result = await createChapter({
+        bookId,
+        number: values.number,
+        title: values.title,
+        access: values.access,
+        scriptText: text,
+        scriptFileName: text === "" ? null : (scriptFileName ?? "Pasted text"),
+      });
+
+      if (!result.ok) {
+        setFormError(result.formError);
+        const numberError = result.fieldErrors?.number;
+        if (numberError) {
+          setNumberTaken(values.number);
+          form.setError("number", { message: numberError });
+        }
+        return;
+      }
+
+      toast.success(
+        `Chapter ${String(result.data.number).padStart(2, "0")} created.`,
+      );
+      // Straight into the chapter that was just created, so the operator lands
+      // where the work continues rather than on an emptied form.
+      router.push(`/books/${bookId}/chapters/${result.data.number}`);
+    });
   }
 
   return (
@@ -79,13 +119,19 @@ export function ChapterCreateEditor({
         action={
           <Button
             type="button"
-            disabled={!form.formState.isValid}
+            disabled={!form.formState.isValid || pending}
             onClick={form.handleSubmit(onSubmit)}
           >
-            Create chapter
+            {pending ? "Creating…" : "Create chapter"}
           </Button>
         }
       />
+
+      {formError && (
+        <p className="field-group__helper field-group__helper--error">
+          {formError}
+        </p>
+      )}
 
       <div className="grid grid-cols-3 gap-6">
         <div className="col-span-2">
@@ -100,7 +146,11 @@ export function ChapterCreateEditor({
         </div>
 
         <div className="col-span-1 flex flex-col gap-6">
-          <NarrationAudioCard />
+          {/* Preview only — narration upload lives on the Chapter editor. */}
+          <NarrationAudioCard
+            acceptedFormats={acceptedAudioFormats}
+            maxSizeMb={maxAudioSizeMb}
+          />
 
           <ChapterSettingsCard
             idPrefix="chapter-create"

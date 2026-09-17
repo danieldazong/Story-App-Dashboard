@@ -42,11 +42,15 @@ function ComposerRow({
   chapters,
   composerRef,
   onCreate,
+  acceptedAudioFormats,
+  maxAudioSizeMb,
 }: {
   bookId: string;
   chapters: ChapterListItem[];
   composerRef: React.Ref<ChapterComposerHandle>;
   onCreate: () => void;
+  acceptedAudioFormats: string[];
+  maxAudioSizeMb: number;
 }) {
   const defaultChapterAccess = useWatch<BookDetailsValues>({
     name: "defaultChapterAccess",
@@ -65,11 +69,22 @@ function ComposerRow({
       defaultAccess={defaultChapterAccess}
       existingNumbers={chapters.map((chapter) => chapter.number)}
       onCreate={onCreate}
+      acceptedAudioFormats={acceptedAudioFormats}
+      maxAudioSizeMb={maxAudioSizeMb}
     />
   );
 }
 
-export function BookEditor({ mode }: { mode: BookEditorMode }) {
+export function BookEditor({
+  mode,
+  acceptedAudioFormats,
+  maxAudioSizeMb,
+}: {
+  mode: BookEditorMode;
+  /** From app_settings, for the composer's Narration card constraint line. */
+  acceptedAudioFormats: string[];
+  maxAudioSizeMb: number;
+}) {
   const router = useRouter();
   const isCreate = mode.kind === "create";
   const book = mode.kind === "edit" ? mode.book : null;
@@ -220,17 +235,44 @@ export function BookEditor({ mode }: { mode: BookEditorMode }) {
           </div>
         </div>
 
-        <ComposerRow
-          bookId={book?.id ?? ""}
-          chapters={chapters}
-          composerRef={composerRef}
-          onCreate={() => router.refresh()}
-        />
+        {/*
+          The composer is create-mode only.
+
+          In edit mode it duplicated the entire Chapter editor screen — script,
+          narration and settings cards — below the book's own form, so the book
+          page did two unrelated jobs and ran to ~3,500px before the Chapters
+          table. Two authoring surfaces for one thing also drift: the dedicated
+          New chapter screen sat stranded for several prompts, toasting "isn't
+          wired to a backend yet" while this composer saved the identical form.
+
+          It stays in create mode because there it earns its place: a new story
+          and its first chapter in one pass, with no round trip through a book
+          id that does not exist yet.
+        */}
+        {isCreate && (
+          <ComposerRow
+            bookId=""
+            chapters={chapters}
+            composerRef={composerRef}
+            onCreate={() => router.refresh()}
+            acceptedAudioFormats={acceptedAudioFormats}
+            maxAudioSizeMb={maxAudioSizeMb}
+          />
+        )}
 
         <ChaptersCard
           bookId={book?.id ?? ""}
           chapters={chapters}
-          onAddChapter={() => composerRef.current?.focusTitle()}
+          onAddChapter={() => {
+            // Create mode still has the composer on screen, so focus it.
+            // Edit mode sends the operator to the dedicated screen, which
+            // persists through createChapter as of this change.
+            if (isCreate) {
+              composerRef.current?.focusTitle();
+              return;
+            }
+            router.push(`/books/${book?.id}/chapters/new`);
+          }}
           onChanged={() => router.refresh()}
         />
       </div>

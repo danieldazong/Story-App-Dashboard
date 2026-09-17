@@ -13,7 +13,7 @@ import { ChapterEditorScriptCard } from "@/components/chapters/chapter-editor-sc
 import { ChapterEditorAudioCard } from "@/components/chapters/chapter-editor-audio-card";
 import { ChapterEditorSettingsCard } from "@/components/chapters/chapter-editor-settings-card";
 import { updateChapter } from "@/app/actions/chapters";
-import type { AudioAsset, Chapter, ChapterAccess } from "@/types/catalog";
+import type { Chapter, ChapterAccess } from "@/types/catalog";
 
 const chapterEditSchema = z.object({
   number: z.number().int().min(1, "Chapter number must be at least 1"),
@@ -42,16 +42,19 @@ export function ChapterEditor({
   chapter,
   previousHref,
   nextHref,
+  acceptedAudioFormats,
+  maxAudioSizeMb,
 }: {
   bookId: string;
   bookTitle: string;
   chapter: Chapter;
   previousHref: string | null;
   nextHref: string | null;
+  /** From app_settings — never constants. See AGENTS.md, prompt 16 notes. */
+  acceptedAudioFormats: string[];
+  maxAudioSizeMb: number;
 }) {
   const router = useRouter();
-  const [audio, setAudio] = useState<AudioAsset>(chapter.audio);
-  const [audioDirty, setAudioDirty] = useState(false);
   // Derived from the row's own updated_at, never from a local clock — the
   // status line must never claim a save that did not happen.
   const [savedAt, setSavedAt] = useState<Date | null>(null);
@@ -67,7 +70,11 @@ export function ChapterEditor({
   });
 
   const { number, title, access, scriptText, scriptFileName } = form.watch();
-  const isDirty = form.formState.isDirty || audioDirty;
+  // Narration is no longer part of the form's unsaved state. An upload persists
+  // itself the moment it completes and the route revalidates, so there is
+  // nothing for Save chapter to write — and `audioDirty` claiming otherwise
+  // would leave Save enabled over work already saved.
+  const isDirty = form.formState.isDirty;
 
   // Re-render every 30s so the "Saved n min ago" line keeps advancing.
   useEffect(() => {
@@ -104,7 +111,6 @@ export function ChapterEditor({
     }
 
     setSavedAt(new Date(result.data.updatedAt));
-    setAudioDirty(false);
     toast.success("Chapter saved");
 
     // resetDefaultValues(), not reset() — reset() re-registers every field and
@@ -241,14 +247,22 @@ export function ChapterEditor({
         </div>
 
         <div className="col-span-1 flex flex-col gap-6">
+          {/*
+            `audio` comes straight from the server row now, not local state:
+            setChapterAudio revalidates this route, so the card re-renders from
+            the persisted truth rather than from an optimistic copy that could
+            disagree with it.
+          */}
           <ChapterEditorAudioCard
-            audio={audio}
-            onAudioChange={(next) => {
-              setAudio(next);
-              setAudioDirty(true);
-            }}
+            audio={chapter.audio}
+            bookId={bookId}
+            chapterId={chapter.id}
+            chapterNumber={chapter.number}
+            onUploaded={() => router.refresh()}
             onPersistDuration={persistDuration}
             durationPending={durationPending}
+            acceptedFormats={acceptedAudioFormats}
+            maxSizeMb={maxAudioSizeMb}
           />
 
           <ChapterEditorSettingsCard
