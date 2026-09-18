@@ -1,4 +1,4 @@
-# AGENTS.md — NovelNow Admin Dashboard
+# AGENTS.md — Talebrim Admin Dashboard
 
 You are an expert Next.js + TypeScript engineer helping build a production-quality internal content management dashboard.
 
@@ -10,7 +10,9 @@ You should think like a senior web developer, and implement like someone buildin
 
 ## Project Overview
 
-We are building the **NovelNow Admin Dashboard**, the internal CMS used to load content into the NovelNow mobile reading app.
+We are building the **Talebrim Admin Dashboard**, the internal CMS used to load content into the Talebrim mobile reading app.
+
+> **Renamed from NovelNow on 2026-09-18**, when the app was deployed to `talebrim.com`. The rename covered every user-visible string — the sidebar wordmark, the sign-in and accept-invitation headings, the browser tab title and meta description, the `global-error` title, and the not-authorised copy — plus the Clerk application name, which renders in the sign-in card and in invitation emails. `package.json` keeps its internal `novelnow-admin` name: never rendered, and renaming it churns the lockfile for nothing. Older notes in this file may still say NovelNow in prose; they refer to the same product.
 
 Its entire purpose is to ensure content exists to consume. Without it there are no books, no chapter text and no audio streams to develop or test the mobile app against.
 
@@ -224,6 +226,27 @@ Controller → useController → register → updateValidAndValue
 | `useWatch` re-renders on keystroke | Would fire while typing; this warning fired only after Save. Confirmed by user repro. |
 
 **Deferring is not fixing.** A `queueMicrotask(() => form.reset(values))` version shipped briefly and appeared to help. The next stack contained `processRootScheduleInMicrotask` — React flushing the same cascade *inside the microtask the fix had created*. It relocated the collision to a different tick. **Treat `queueMicrotask` / `setTimeout` / "defer it" as a smell whenever the root cause is not yet identified**: symptoms move, evidence gets muddier, and a testing round is burned.
+
+---
+
+**A second RHF trap in the same family, found 2026-09-18: a form does not re-seed from a changed prop, and the two obvious fixes each solve half of it.**
+
+**Symptom:** a server-side write persists and revalidates correctly, and the screen keeps showing the old value until a manual browser reload. On this project: a script upload stored a 50,978-word file, `router.refresh()` fired, and the textarea still read `0 words`. The file-name row beside it updated instantly — because that reads `chapter.script` directly, while the textarea reads `form.watch()`. **That asymmetry is the tell**: if one part of a card updates and another does not, the stale part is almost certainly behind form state.
+
+**Cause:** `useForm` reads `defaultValues` **once, at mount**. `router.refresh()` refetches the route and React hands the component a new prop, but RHF has no reason to look at it again. The form keeps whatever it was born with, indefinitely.
+
+**Two things are needed to fix it, and shipping either alone looks like the fix silently doing nothing:**
+
+| API | Updates | Alone, you get |
+|---|---|---|
+| `resetDefaultValues(v)` | the clean **baseline** | Save correctly stays disabled — and the textarea still shows the old text, because `watch()` reads values |
+| `setValue(n, v, {shouldDirty:false})` | the **values** | The text appears — and the form may read dirty over work the server already stored |
+
+Call both. The baseline keeps `Save` honest; the values make the screen match the row.
+
+**The subscription trap that made the first attempt a no-op.** The guard was written as `if (form.formState.defaultValues?.x === serverX) return;` inside a `useEffect`. `formState` is a **Proxy** backed by `_proxyFormState`, and it only registers a subscription for a field when that field is read **during render**. Read solely inside an effect, it closes over a mount-time snapshot: the guard compared fresh server text against a stale copy, judged them equal, and returned early on every single upload. Typecheck, lint and build were all clean, and the behaviour was identical to having written no fix at all.
+
+**The rule: never use `formState` as an effect's comparison baseline.** Use a `useRef` you write yourself. A ref has no subscription semantics to get wrong, and it holds exactly what this component last seeded — which is the only question the guard is asking.
 
 **Related React behaviour worth knowing: a component passed as a prop is rendered by the receiver but owned by the sender.** `<PageHeader action={<SaveButton />} />` creates `SaveButton` in the parent's render but renders it inside `PageHeader`. When it subscribes to external state, React attributes its updates to the *sender*. This is why these warnings routinely name two components that look unrelated to the actual call site — and why the component names in the message are a weak signal compared to the expanded stack.
 
@@ -1469,6 +1492,28 @@ A review of the Book editor and Chapter editor against real content. Five change
 - **Offline disables nothing.** The original required disabling every save and upload while offline. `navigator.onLine` reports whether a network interface is up, not whether anything is reachable: it returns `true` on a connected-but-dead network and `false` on some VPN configurations, so it would both fail to block when it matters and block saves that would have worked — while touching every form in the app. The banner informs; the existing error handling already catches a save that fails. Real gating needs a reachability check, as its own prompt.
 
 **Event tracking (§7) was recommended against, not deferred.** This is a single-operator internal tool; the questions tracking answers are ones the operator can answer directly. The smallest future version is one `lib/track.ts` with a no-op default and four named events — not worth a dependency now.
+
+---
+
+### Team management, deployment and the rename (2026-09-18, post-prompt-19)
+
+Work after the prompt series closed. Recorded here because none of it belongs to a prompt, and because four separate investigations today each ended at the same root cause.
+
+**The Team card was fiction, and the fix had to start by refusing a feature.** It rendered three invented people from a `SETTINGS_TEAM` fixture, with a `Remove` link that mutated local state and a `Send invite` button whose own comment admitted it did nothing. Making it real surfaced a design question that could not be answered in code: the card offered **Admin / Editor / Audio Master**, but every gate in this app is `metadata.role === "admin"`. Inviting someone as an Editor would have created a user who **cannot sign in at all**. The dropdown is gone; the role is stated as Admin with a line explaining why. Bring the other roles back when there is behaviour behind them, not before.
+
+`app/actions/team.ts` now reads live users and pending invitations from Clerk — there is no `team_members` table by design, and a local roster would drift the moment someone is removed in the Clerk Dashboard. `TeamMemberRecord` models three states a fixture could not: **Admin**, **Invited** (accepted nothing yet), and **No access** (a real Clerk user carrying no role, who cannot sign in). The third one immediately exposed an existing account in that state.
+
+**`removeTeamMember` went through three spellings, and the middle one is the instructive failure.** `updateUser(id, {publicMetadata:{role:null}})` is deprecated for metadata and stored `{"role":null}` — the key still present. `updateUser(id, {publicMetadata:{}})` was worse: that path **merges**, so `{}` merges nothing and the role survives — a Remove button reporting success while revoking nothing. The correct call is `replaceUserMetadata(id, {publicMetadata:{}})`, verified against the live instance: `updateUserMetadata` deep-merges, `replaceUserMetadata({})` clears. **Confirm merge-vs-replace empirically before trusting either.**
+
+**Read Clerk's structured error codes, never its message.** `ClerkAPIResponseError.message` is only the HTTP status text — `"Unprocessable Entity"` — so an earlier handler that regex-matched `/duplicate|already exists|taken/` against it could never match, and every duplicate invitation surfaced as *"check your connection"* over a request that arrived and was understood perfectly. Branch on `errors[0].code`: `form_identifier_exists`, `invitations_not_supported`.
+
+**An invitation needs a sign-up surface, and it needs an absolute URL.** Two failures, both only visible in a browser. `redirectUrl` was passing `NEXT_PUBLIC_CLERK_SIGN_IN_URL`, the bare path `/sign-in`, which Clerk resolved against **its own** `*.accounts.dev` domain — Accept landed on a 404 on Clerk's host. And the target was wrong even absolute: the email's Accept button carries `__clerk_status=sign_up`, so `<SignIn>` cannot complete it. `/accept-invitation` renders `<SignUp>` and is public in `proxy.ts`. This narrows the "no sign-up route" rule rather than reversing it — Clerk only completes the flow with a valid `__clerk_ticket`, so it cannot be used to self-provision. **A deployed environment must set `NEXT_PUBLIC_APP_URL`** or every invitation points at `localhost`.
+
+**Deployed to Vercel at `talebrim.com`** (Cloudflare DNS, CNAME on `@`, **proxy disabled** — Cloudflare proxying terminates TLS itself and Vercel can never issue its certificate). Still on the **development** Clerk instance, deliberately: see Deferred Security Tasks item 3, which now records the four symptoms that all trace to it.
+
+**One fix crossed from the browser back into the code, and it is filed in the playbooks.** A script upload persisted, revalidated, and displayed nothing until a manual reload. The mechanism — RHF not re-seeding from a changed prop, and `formState` being unusable as an effect's comparison baseline — is under **"Debugging `setState`-during-render"**, because it is the same library and the same family of trap. Not restated here; one canonical copy.
+
+> **The pattern across today: four symptoms, one cause.** Invitations landing in spam, `[Development]` in email subjects, the "Development mode" badge under the avatar, and `pk_test_` keys were each investigated as separate problems before the common cause — a development Clerk instance — was obvious. When several unrelated-looking symptoms appear at once, look for the shared upstream before fixing any of them individually.
 
 ---
 
