@@ -41,6 +41,31 @@ import type { ChapterAccess, ChapterListItem } from "@/types/catalog";
 // never chapter prose. See AGENTS.md, Performance Rules.
 const columnHelper = createColumnHelper<ChapterListItem>();
 
+/**
+ * Five 48px rows, the 40px header, and half of the sixth row.
+ *
+ * `40 + (5 * 48) + 24`. The half row is deliberate: a container ending flush
+ * on a row boundary looks complete, so nothing invites the operator to scroll
+ * it. Matches the Dashboard's `Needs attention` window for the same reason.
+ *
+ * The table windows and scrolls rather than growing with the chapter count —
+ * a 13-chapter story pushed the danger zone below it off the screen, and a
+ * 148-chapter import would be unusable.
+ *
+ * This is the one place AGENTS.md's nested-scroll rule has to be read
+ * carefully. That rule exists because an inner scrollbar on a FULL-PAGE table
+ * competes with the page scroll for the same gesture over the same content.
+ * Here the table is one card on a composed editor screen, with a cover card
+ * above it and a danger zone below, so the page scroll still has its own
+ * content to move — the same reasoning that bounded the Dashboard's two lower
+ * cards. The rule is scoped to full-page tables in AGENTS.md accordingly.
+ *
+ * The sticky header inside already existed, for the page scroll; it now sticks
+ * against this container instead. Row height is fixed (`h-table-row`), so this
+ * height is exact rather than a guess.
+ */
+const CHAPTERS_MAX_HEIGHT = "304px";
+
 export function ChaptersCard({
   bookId,
   chapters,
@@ -349,7 +374,10 @@ export function ChaptersCard({
           </div>
         </div>
       ) : (
-        <div className="table-wrapper">
+        <div
+          className="relative w-full overflow-y-auto rounded-card"
+          style={{ maxHeight: CHAPTERS_MAX_HEIGHT }}
+        >
           <table className="w-full table-fixed border-collapse">
             <colgroup>
               <col className="w-16" />
