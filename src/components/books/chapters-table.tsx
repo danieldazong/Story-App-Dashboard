@@ -113,9 +113,16 @@ export function ChaptersCard({
         cell: ({ row }) => {
           const chapter = row.original;
           if (chapter.script.state === "ready") {
+            // The "words" suffix is dropped: the column is headed Text, the
+            // unit is the same on every populated row, and repeating it was
+            // what wrapped a five-digit count onto two lines (50,978 words)
+            // and broke the row rhythm. `title` keeps the unit reachable.
             return (
-              <span className="inline-flex items-center gap-1.5 font-mono text-mono">
-                {chapter.script.wordCount.toLocaleString()} words
+              <span
+                className="inline-flex items-center gap-1.5 font-mono text-mono"
+                title={`${chapter.script.wordCount.toLocaleString()} words`}
+              >
+                {chapter.script.wordCount.toLocaleString()}
                 <Check className="h-3.5 w-3.5 text-status-ok" />
               </span>
             );
