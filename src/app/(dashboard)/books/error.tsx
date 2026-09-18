@@ -13,7 +13,7 @@ export default function BooksError({
     <RouteErrorCard
       error={error}
       retry={retry}
-      breadcrumbs={[{ label: "Books" }]}
+      breadcrumbs={[{ label: "Stories" }]}
       parentHref="/"
       parentLabel="Dashboard"
       context="your books"

@@ -20,7 +20,7 @@ export default function ChapterNotFound() {
   return (
     <div className="flex flex-col gap-6">
       <Breadcrumbs
-        items={[{ label: "Books", href: "/books" }, { label: "Not found" }]}
+        items={[{ label: "Stories", href: "/books" }, { label: "Not found" }]}
       />
       <div className="card flex flex-col gap-3 p-6">
         <h1 className="text-page-title">Chapter not found</h1>

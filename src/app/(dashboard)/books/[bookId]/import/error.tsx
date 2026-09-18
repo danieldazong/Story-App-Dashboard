@@ -21,7 +21,7 @@ export default function ImportError({
     <RouteErrorCard
       error={error}
       retry={retry}
-      breadcrumbs={[{ label: "Books", href: "/books" }, { label: "Error" }]}
+      breadcrumbs={[{ label: "Stories", href: "/books" }, { label: "Error" }]}
       parentHref={backHref}
       parentLabel={params?.bookId ? "this book" : "books"}
       context="the import screen"

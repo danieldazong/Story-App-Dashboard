@@ -469,7 +469,7 @@ export function BulkImportScreen({
     <div className="flex flex-col gap-6">
       <PageHeader
         breadcrumbs={[
-          { label: "Books", href: "/books" },
+          { label: "Stories", href: "/books" },
           { label: bookTitle, href: `/books/${bookId}` },
           { label: "Import chapters" },
         ]}

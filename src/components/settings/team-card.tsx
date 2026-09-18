@@ -139,7 +139,7 @@ export function TeamCard({
       toast.success(
         target.status === "pending"
           ? `Invitation to ${target.email} cancelled.`
-          : `${target.email} no longer has access.`,
+          : `${target.email}'s account was deleted.`,
       );
       setPendingRemoval(null);
       await refresh();
@@ -247,11 +247,11 @@ export function TeamCard({
                         aria-label={
                           member.status === "pending"
                             ? `Cancel invitation to ${member.email}`
-                            : `Remove ${member.name}`
+                            : `Delete ${member.name}'s account`
                         }
                         className="rounded-sm text-helper text-muted underline transition-colors hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                       >
-                        {member.status === "pending" ? "Cancel" : "Remove"}
+                        {member.status === "pending" ? "Cancel" : "Delete"}
                       </button>
                     )}
                   </TableCell>
@@ -354,12 +354,20 @@ export function TeamCard({
             <DialogTitle>
               {pendingRemoval?.status === "pending"
                 ? "Cancel this invitation?"
-                : "Remove this operator?"}
+                : "Delete this account?"}
             </DialogTitle>
             <DialogDescription>
               {pendingRemoval?.status === "pending"
                 ? `The invitation to ${pendingRemoval?.email} will be cancelled. They can be invited again later.`
-                : `${pendingRemoval?.email} will lose access to the dashboard immediately. Their account is not deleted, and access can be restored by inviting them again.`}
+                : /*
+                    Deliberately not "remove access" — that phrasing described
+                    the OLD behaviour (clear the role, keep the account), and
+                    kept it after the action underneath changed to a real
+                    delete. This is the one line that must never drift from
+                    what removeTeamMember() actually does: an irreversible
+                    account deletion has to read as one.
+                  */
+                  `${pendingRemoval?.email}'s Clerk account will be permanently deleted — not just their access. This can't be undone. Adding them back later means sending a fresh invitation.`}
             </DialogDescription>
           </DialogHeader>
           {removeError && (
@@ -373,7 +381,7 @@ export function TeamCard({
               disabled={removing}
               onClick={() => setPendingRemoval(null)}
             >
-              Keep access
+              {pendingRemoval?.status === "pending" ? "Keep invitation" : "Keep account"}
             </Button>
             <Button
               variant="destructive"
@@ -381,10 +389,12 @@ export function TeamCard({
               onClick={handleRemove}
             >
               {removing
-                ? "Removing…"
+                ? pendingRemoval?.status === "pending"
+                  ? "Cancelling…"
+                  : "Deleting…"
                 : pendingRemoval?.status === "pending"
                   ? "Cancel invitation"
-                  : "Remove access"}
+                  : "Delete account"}
             </Button>
           </DialogFooter>
         </DialogContent>

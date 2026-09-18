@@ -275,12 +275,23 @@ export async function revokeTeamInvitation(
 }
 
 /**
- * Removes an operator's admin role. Does NOT delete the Clerk user.
+ * DELETES the Clerk user. Irreversible.
  *
- * Deleting the account would destroy an identity that may be used elsewhere,
- * and it is not recoverable from this screen. Clearing the role is sufficient
- * and reversible: `requireAdmin()` redirects them at the next request, and RLS
- * stops recognising them.
+ * This cleared the admin role until 2026-09-18, leaving the account intact.
+ * That was defensible — reversible, and it preserved an identity that might be
+ * used elsewhere — but it did not match what the button appeared to do. A
+ * removed operator stayed in the roster as `No access` with a live `Remove`
+ * link beside them, so clicking it again reported success and changed nothing.
+ * A control that reports success while doing nothing is the defect this
+ * codebase keeps rediscovering; here it was the *copy* that was wrong rather
+ * than the code.
+ *
+ * Changed at explicit request, with the trade-off stated: there is no undo, and
+ * re-adding someone means a fresh invitation they must accept. The confirmation
+ * dialog says so in those words — it previously promised the opposite.
+ *
+ * `revokeTeamInvitation` is the sibling for someone who never accepted; that
+ * deletes the invitation, not an account.
  */
 export async function removeTeamMember(
   userId: string,
@@ -289,39 +300,28 @@ export async function removeTeamMember(
 
   if (!userId.trim()) return actionError("Missing user id.");
 
-  // Removing your own access would lock you out of the screen you are standing
-  // on, with no way back in from inside the app.
+  // Deleting your own account would lock you out of the screen you are standing
+  // on, permanently, with no recovery path from inside the app. The card also
+  // renders no button for your own row — this is the boundary, not the UI.
   if (userId === actorId) {
-    return actionError("You can't remove your own access.");
+    return actionError("You can't delete your own account.");
   }
 
   try {
     const client = await clerkClient();
 
-    // `replaceUserMetadata({})`, and every part of that matters.
-    //
-    // Verified against the live instance rather than assumed, because two
-    // earlier spellings of this line were both wrong:
-    //
-    //   updateUser(id, { publicMetadata: { role: null } })
-    //     Deprecated for metadata, and it stored `{"role": null}` — the key
-    //     still present, holding null. isAdmin() reads that as not-admin, so
-    //     access was correctly revoked, but a never-provisioned user stores
-    //     `undefined` instead: two spellings of one state.
-    //
-    //   updateUser(id, { publicMetadata: {} })
-    //     Worse. That path MERGES (probe: sending one key left the others
-    //     intact), so `{}` merges nothing and the role survives — a Remove
-    //     button that reports success and revokes nothing.
-    //
-    // replaceUserMetadata uses replace semantics, and Clerk's own docs name
-    // `{}` as the way to clear a field. Probe: `{"role":"admin"}` -> `{}`.
-    await client.users.replaceUserMetadata(userId, { publicMetadata: {} });
+    // Delete, not clear-and-keep. See the doc comment above for the earlier
+    // behaviour and why it changed. The three-attempt history of the OLD
+    // clear-the-role call (updateUser -> merge bug -> replaceUserMetadata) is
+    // preserved in AGENTS.md rather than here, since none of it applies to a
+    // delete — there is no merge-vs-replace question when the user ceases to
+    // exist.
+    await client.users.deleteUser(userId);
 
     revalidatePath("/settings");
     return actionOk(undefined);
   } catch (error) {
-    console.error("Could not remove team member:", error);
-    return actionError("Couldn't remove that operator. Try again.");
+    console.error("Could not delete team member:", error);
+    return actionError("Couldn't delete that account. Try again.");
   }
 }

@@ -1096,7 +1096,7 @@ These are known, accepted-for-now gaps, deliberately deferred while the dashboar
    The original reasoning still stands on its own terms — Clerk's hosted sign-up URL is reachable while the toggle is on — but the exposure it describes is small and the cost of closing it is large:
 
    - Anyone who self-signs-up gets **no role**, so `requireAdmin()` sends them to `/not-authorised`. Task 5's verification proves that guard holds without the proxy. They can see nothing.
-   - The residue is a junk Clerk user record, which the Team card now renders honestly as **No access**.
+   - The residue is a junk Clerk user record, which the Team card renders as **No access** — visible, and now deletable in one click from that row (see "Delete means delete" below; this stopped being a permanent residue on 2026-09-18).
 
    **Trading a working invite flow for junk-record hygiene is the wrong trade.** Leave the toggle on.
 
@@ -1503,7 +1503,7 @@ Work after the prompt series closed. Recorded here because none of it belongs to
 
 `app/actions/team.ts` now reads live users and pending invitations from Clerk — there is no `team_members` table by design, and a local roster would drift the moment someone is removed in the Clerk Dashboard. `TeamMemberRecord` models three states a fixture could not: **Admin**, **Invited** (accepted nothing yet), and **No access** (a real Clerk user carrying no role, who cannot sign in). The third one immediately exposed an existing account in that state.
 
-**`removeTeamMember` went through three spellings, and the middle one is the instructive failure.** `updateUser(id, {publicMetadata:{role:null}})` is deprecated for metadata and stored `{"role":null}` — the key still present. `updateUser(id, {publicMetadata:{}})` was worse: that path **merges**, so `{}` merges nothing and the role survives — a Remove button reporting success while revoking nothing. The correct call is `replaceUserMetadata(id, {publicMetadata:{}})`, verified against the live instance: `updateUserMetadata` deep-merges, `replaceUserMetadata({})` clears. **Confirm merge-vs-replace empirically before trusting either.**
+**`removeTeamMember` went through three spellings before it deleted the role, and a fourth later the same day replaced the whole approach.** `updateUser(id, {publicMetadata:{role:null}})` is deprecated for metadata and stored `{"role":null}` — the key still present. `updateUser(id, {publicMetadata:{}})` was worse: that path **merges**, so `{}` merges nothing and the role survives — a Remove button reporting success while revoking nothing. `replaceUserMetadata(id, {publicMetadata:{}})` was the correct fix for clearing a role, verified against the live instance: `updateUserMetadata` deep-merges, `replaceUserMetadata({})` clears. **Confirm merge-vs-replace empirically before trusting either.** That merge-vs-replace finding still stands as a general Clerk lesson — but `removeTeamMember` no longer calls either method. See "Delete means delete" below for what replaced it and why.
 
 **Read Clerk's structured error codes, never its message.** `ClerkAPIResponseError.message` is only the HTTP status text — `"Unprocessable Entity"` — so an earlier handler that regex-matched `/duplicate|already exists|taken/` against it could never match, and every duplicate invitation surfaced as *"check your connection"* over a request that arrived and was understood perfectly. Branch on `errors[0].code`: `form_identifier_exists`, `invitations_not_supported`.
 
@@ -1514,6 +1514,19 @@ Work after the prompt series closed. Recorded here because none of it belongs to
 **One fix crossed from the browser back into the code, and it is filed in the playbooks.** A script upload persisted, revalidated, and displayed nothing until a manual reload. The mechanism — RHF not re-seeding from a changed prop, and `formState` being unusable as an effect's comparison baseline — is under **"Debugging `setState`-during-render"**, because it is the same library and the same family of trap. Not restated here; one canonical copy.
 
 > **The pattern across today: four symptoms, one cause.** Invitations landing in spam, `[Development]` in email subjects, the "Development mode" badge under the avatar, and `pk_test_` keys were each investigated as separate problems before the common cause — a development Clerk instance — was obvious. When several unrelated-looking symptoms appear at once, look for the shared upstream before fixing any of them individually.
+
+**Delete means delete, at explicit request — `removeTeamMember` now calls `clerkClient().users.deleteUser(id)`, irreversibly.** It cleared the role until this point, keeping the account intact: defensible in isolation (reversible, preserved an identity that might be used elsewhere), but it did not match what the button looked like it did. A deleted operator stayed in the roster as **No access** with a live `Remove` link beside them, so clicking it again reported success and changed nothing — the same "control that reports success while doing nothing" defect this codebase keeps rediscovering, except the *copy* was wrong this time, not the code. Asked directly, the answer was to make deletion real rather than to keep patching the appearance of it.
+
+Every layer had to change together, or the UI would go on promising something the action no longer did:
+
+- The confirmation dialog previously said *"Their account is not deleted, and access can be restored by inviting them again."* That line is now the opposite: *"…will be permanently deleted — not just their access. This can't be undone. Adding them back later means sending a fresh invitation."*
+- Dialog title, both buttons, the row-level trigger, its `aria-label`, and the success toast all say **delete** — none still says "remove" while the action underneath deletes.
+- The self-removal guard (`userId === actorId`) stays, and matters more now: it used to prevent a reversible lockout, and now prevents an **irreversible** one — deleting your own account with no recovery path from inside the app.
+- `revokeTeamInvitation` is unaffected and is the sibling for someone who never accepted: it deletes the invitation, not an account.
+
+**The lesson: when an action's severity changes, audit every string that describes it, not just the function that performs it.** A destructive action behind reassuring copy is worse than a merely-confusing one — the operator has no reason to hesitate.
+
+**Sidebar and every "Books" screen label renamed to "Stories."** 16 files, all breadcrumb `label:` values and page `title`s — the sidebar nav item, the list page, every error/not-found boundary under `/books`, and the bulk-import screen. `/books` stays the URL path and `bookId` stays the internal name deliberately: renaming those would mean new routes and redirects for a change nobody using the app would ever see, since paths are not displayed. This is a display-label rename only, done everywhere at once so a breadcrumb never disagrees with the sidebar it came from.
 
 ---
 

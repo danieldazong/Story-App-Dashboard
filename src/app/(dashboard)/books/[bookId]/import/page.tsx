@@ -21,7 +21,7 @@ export default async function BulkImportPage({
     return (
       <div className="flex flex-col gap-6">
         <Breadcrumbs
-          items={[{ label: "Books", href: "/books" }, { label: "Error" }]}
+          items={[{ label: "Stories", href: "/books" }, { label: "Error" }]}
         />
         <QueryErrorCard
           message={bookResult.error}
@@ -46,7 +46,7 @@ export default async function BulkImportPage({
       <div className="flex flex-col gap-6">
         <Breadcrumbs
           items={[
-            { label: "Books", href: "/books" },
+            { label: "Stories", href: "/books" },
             { label: book.title, href: `/books/${book.id}` },
             { label: "Error" },
           ]}

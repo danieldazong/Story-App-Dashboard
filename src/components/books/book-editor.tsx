@@ -182,8 +182,8 @@ export function BookEditor({
         <PageHeader
           breadcrumbs={
             book
-              ? [{ label: "Books", href: "/books" }, { label: book.title }]
-              : [{ label: "Books", href: "/books" }, { label: "New Story" }]
+              ? [{ label: "Stories", href: "/books" }, { label: book.title }]
+              : [{ label: "Stories", href: "/books" }, { label: "New Story" }]
           }
           title={title}
           action={

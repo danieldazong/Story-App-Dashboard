@@ -13,8 +13,8 @@ export default async function BooksPage() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        breadcrumbs={[{ label: "Books" }]}
-        title="Books"
+        breadcrumbs={[{ label: "Stories" }]}
+        title="Stories"
         action={
           <Button asChild>
             <Link href="/books/new">New Story</Link>

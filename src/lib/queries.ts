@@ -62,8 +62,26 @@ function fail(
   };
 }
 
-/** How long to wait before the single retry below. */
-const RETRY_DELAY_MS = 250;
+/**
+ * Backoff for transient read failures, in milliseconds — one entry per retry.
+ *
+ * Two retries, not one, and starting later than 250ms. The Dashboard failed
+ * with "Could not count missing audio. Couldn't reach the database" on the
+ * first load after sign-in, while the Needs attention table beside it rendered
+ * fine from the same request with the same token: one query lost, its siblings
+ * won. Clicking `Try again` a second later always worked.
+ *
+ * That is cold-connection latency, not an outage. Performance Rules records a
+ * measured **1244ms for a single `HEAD`** against this instance — longer than a
+ * real `select *`, because connection setup dominates on `t3.nano`.
+ * `getDashboardCounts` opens with three `HEAD` counts at once, so the first
+ * load after sign-in is the worst case in the whole app. A single retry 250ms
+ * later was still inside the same cold window and failed identically.
+ *
+ * 300ms then 900ms gives ~1.2s of headroom across three attempts, which covers
+ * a cold start without making a genuine outage feel sluggish.
+ */
+const RETRY_DELAYS_MS = [300, 900];
 
 /**
  * Longer, because a skewed clock is not a dropped packet.
@@ -98,24 +116,32 @@ const SKEW_RETRY_DELAY_MS = 3_000;
 async function withRetry<T extends { error: { message: string } | null }>(
   run: () => PromiseLike<T>,
 ): Promise<T> {
-  const first = await run();
-  if (!first.error) return first;
+  let result = await run();
 
-  const message = first.error.message;
+  for (const delay of RETRY_DELAYS_MS) {
+    if (!result.error) return result;
 
-  // A not-yet-valid token is transient in the most literal sense: it becomes
-  // valid by waiting. Retried on a longer delay than a network blip, since the
-  // wait has to outlast the clock difference rather than a dropped packet.
-  if (isSkewError(message)) {
-    await new Promise((resolve) => setTimeout(resolve, SKEW_RETRY_DELAY_MS));
-    return run();
+    const message = result.error.message;
+
+    // A not-yet-valid token is transient in the most literal sense: it becomes
+    // valid by waiting. It gets ONE longer wait rather than the backoff ladder,
+    // because the wait has to outlast a clock difference rather than a cold
+    // connection — and if 3s does not cover the drift, the clock needs fixing
+    // and `describeDbError` says so.
+    if (isSkewError(message)) {
+      await new Promise((resolve) => setTimeout(resolve, SKEW_RETRY_DELAY_MS));
+      return run();
+    }
+
+    // A permission denial or a constraint violation is deterministic: retrying
+    // wastes a round trip and delays an error the operator needs now.
+    if (message.trim() !== "" && !isNetworkError(message)) return result;
+
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    result = await run();
   }
 
-  const transient = message.trim() === "" || isNetworkError(message);
-  if (!transient) return first;
-
-  await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-  return run();
+  return result;
 }
 
 // ---------------------------------------------------------------------------

@@ -269,7 +269,7 @@ export function ChapterEditor({
       <div className="flex flex-col gap-3">
         <Breadcrumbs
           items={[
-            { label: "Books", href: "/books" },
+            { label: "Stories", href: "/books" },
             { label: bookTitle, href: `/books/${bookId}` },
             { label: `Chapter ${chapter.number}` },
           ]}
