@@ -326,12 +326,17 @@ export function ChaptersCard({
               Add chapter
             </Button>
             {/*
-              The copy above has promised "or import a folder of scripts" since
-              prompt 05, with nothing behind it until now.
+              The sub-line above has promised "or import a folder of scripts"
+              since prompt 05, with nothing behind it until prompt 10 built the
+              import screen. An empty state that names an action it cannot
+              perform is the defect prompt 19's empty-state audit exists to
+              catch.
             */}
             {canOpenChapter && (
               <Button asChild variant="outline" size="sm">
-                <Link href={`/books/${bookId}/import`}>Import scripts</Link>
+                <Link href={`/books/${bookId}/import`}>
+                  Upload scripts in bulk
+                </Link>
               </Button>
             )}
           </div>

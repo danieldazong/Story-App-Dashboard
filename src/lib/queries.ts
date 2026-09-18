@@ -4,6 +4,7 @@ import {
   classifyDbError,
   describeDbError,
   isNetworkError,
+  isSkewError,
   type DbErrorKind,
 } from "@/lib/db-errors";
 import { SETTINGS_DEFAULTS } from "@/data/settings-defaults";
@@ -65,6 +66,17 @@ function fail(
 const RETRY_DELAY_MS = 250;
 
 /**
+ * Longer, because a skewed clock is not a dropped packet.
+ *
+ * A "JWT not yet valid" token becomes valid once real time catches up to its
+ * `nbf`, so the retry has to outlast the skew itself. 250ms would re-send a
+ * token that is still in the future and fail identically. 3s covers the
+ * few-second drift a typical unsynced desktop accumulates; beyond that the
+ * clock needs fixing and the error message says so.
+ */
+const SKEW_RETRY_DELAY_MS = 3_000;
+
+/**
  * Runs a read, retrying ONCE after a short delay if — and only if — it failed
  * for a transport reason.
  *
@@ -90,6 +102,15 @@ async function withRetry<T extends { error: { message: string } | null }>(
   if (!first.error) return first;
 
   const message = first.error.message;
+
+  // A not-yet-valid token is transient in the most literal sense: it becomes
+  // valid by waiting. Retried on a longer delay than a network blip, since the
+  // wait has to outlast the clock difference rather than a dropped packet.
+  if (isSkewError(message)) {
+    await new Promise((resolve) => setTimeout(resolve, SKEW_RETRY_DELAY_MS));
+    return run();
+  }
+
   const transient = message.trim() === "" || isNetworkError(message);
   if (!transient) return first;
 

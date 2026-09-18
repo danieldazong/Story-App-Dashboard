@@ -9,9 +9,12 @@
 //     select or chip control can offer. These are choices the application
 //     supports, not values an operator has configured.
 //   - TEAM_ROLE_OPTIONS / TeamRole: role labels. Roles come from Clerk
-//     publicMetadata; this maps them to display strings.
-//   - SETTINGS_TEAM: placeholder roster. The Team card reads from Clerk once a
-//     real member list exists; there is no `team_members` table by design.
+//     publicMetadata; this maps them to display strings. Still read by the
+//     Account card to label the signed-in operator's own role.
+//   - SETTINGS_TEAM was deleted on 2026-09-18. It was a placeholder roster of
+//     three invented people that the Team card rendered as though real. The
+//     card now reads live users and pending invitations from Clerk via
+//     app/actions/team.ts; there is no `team_members` table by design.
 //   - SETTINGS_DEFAULTS: the fallback used by getAppSettings when the
 //     app_settings table is empty — a fresh database has no settings row, and
 //     prompt 12 forbids seeding one in a migration. Read by getAppSettings and
@@ -45,37 +48,11 @@ export const TEAM_ROLE_OPTIONS = [
   { value: "audio_master", label: "Audio Master" },
 ] as const satisfies TeamRoleOption[];
 
-export type TeamMember = {
-  id: string;
-  name: string;
-  email: string;
-  role: TeamRole;
-};
-
-/**
- * Placeholder team roster. Replaced by a real `team_members` read once the
- * Supabase prompts land.
- */
-export const SETTINGS_TEAM = [
-  {
-    id: "member-1",
-    name: "Lead Operator",
-    email: "operator@novelnow.internal",
-    role: "admin",
-  },
-  {
-    id: "member-2",
-    name: "Elena Vance",
-    email: "elena.vance@novelnow.internal",
-    role: "editor",
-  },
-  {
-    id: "member-3",
-    name: "Marcus Ray",
-    email: "marcus.ray@novelnow.internal",
-    role: "audio_master",
-  },
-] as const satisfies TeamMember[];
+// TeamMember and SETTINGS_TEAM were deleted on 2026-09-18. The Team card's
+// roster type is now `TeamMemberRecord` in app/actions/team.ts, shaped by what
+// Clerk actually returns — including the two states a fixture could not
+// express: an invitation that has not been accepted, and a user carrying no
+// role at all (who cannot sign in).
 
 export const SETTINGS_DEFAULTS = {
   storageProvider: "supabase_storage",

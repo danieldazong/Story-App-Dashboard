@@ -67,7 +67,6 @@ type Phase = "collecting" | "preflight" | "importing" | "settled";
 const STATUS_LABEL: Record<BatchRowStatus, string> = {
   new_chapter: "New chapter",
   replaces_script: "Replaces script",
-  no_number: "No number found",
   duplicate_number: "Duplicate number",
   unreadable_file: "Unreadable file",
 };
@@ -75,7 +74,6 @@ const STATUS_LABEL: Record<BatchRowStatus, string> = {
 const STATUS_PILL: Record<BatchRowStatus, string> = {
   new_chapter: "status-pill status-pill--ok",
   replaces_script: "status-pill status-pill--warn",
-  no_number: "status-pill status-pill--warn",
   duplicate_number: "status-pill status-pill--destructive",
   unreadable_file: "status-pill status-pill--destructive",
 };
@@ -225,38 +223,41 @@ export function BulkImportScreen({
       }
 
       setReading(0);
-      setInputs((current) => [...current, ...next]);
+
+      // Seed each NEW row's checkbox here, not in an effect watching the
+      // evaluated rows.
+      //
+      // The effect version was wrong twice over. It needed a "have I already
+      // considered this row?" guard so that unchecking a row would not be
+      // silently undone on the next evaluation — but that guard marked rows as
+      // considered on a pass where nothing got checked, so every row arrived
+      // unchecked and the button permanently read "Import 0 chapters".
+      //
+      // This is the one moment the question has an unambiguous answer: the row
+      // did not exist a line ago, so the operator cannot have decided anything
+      // about it. Afterwards `checkedIds` is owned solely by the operator, and
+      // nothing re-derives it.
+      //
+      // evaluateBatch runs here against the combined set because status depends
+      // on the whole batch — a file is only a duplicate relative to its
+      // siblings. It is pure and deterministic, so running it here and in the
+      // render memo cannot disagree.
+      const combined = [...inputs, ...next];
+      const evaluated = evaluateBatch(combined, existingNumbers, highestExisting);
+      const newIds = new Set(next.map((row) => row.id));
+
+      setInputs(combined);
       setServerRows(null);
-    },
-    [acceptedScriptFormats, inputs.length],
-  );
-
-  // Rows the auto-check pass has already considered. Without this, unchecking a
-  // row would re-check it on the next evaluation — an operator's decision
-  // silently undone. Declared BEFORE the effect that reads it: `const` is not
-  // hoisted, so a ref declared below its own reader throws at runtime while
-  // typechecking cleanly.
-  const seenIds = useRef(new Set<string>());
-
-  // Rows that arrive are checked by default unless they replace or are blocked.
-  useEffect(() => {
-    setCheckedIds((current) => {
-      const next = new Set(current);
-      let changed = false;
-      for (const row of localRows) {
-        if (
-          !seenIds.current.has(row.id) &&
-          !progress[row.id] &&
-          startsChecked(row)
-        ) {
-          next.add(row.id);
-          changed = true;
+      setCheckedIds((current) => {
+        const updated = new Set(current);
+        for (const row of evaluated) {
+          if (newIds.has(row.id) && startsChecked(row)) updated.add(row.id);
         }
-        seenIds.current.add(row.id);
-      }
-      return changed ? next : current;
-    });
-  }, [localRows, progress]);
+        return updated;
+      });
+    },
+    [acceptedScriptFormats, inputs, existingNumbers, highestExisting],
+  );
 
   function toggle(id: string) {
     setCheckedIds((current) => {
@@ -284,7 +285,6 @@ export function BulkImportScreen({
     setFormError(null);
     setNotice(null);
     filesById.current.clear();
-    seenIds.current.clear();
   }
 
   /** Uploads one row and persists its text. Returns null on success. */

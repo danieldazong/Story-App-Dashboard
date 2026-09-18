@@ -190,9 +190,18 @@ export async function extractAndSetChapterScript(
   try {
     raw =
       extension === ".docx"
-        ? await extractDocxTextFromBuffer(await blob.arrayBuffer())
+        ? await extractDocxTextFromBuffer(
+            Buffer.from(await blob.arrayBuffer()),
+          )
         : await blob.text();
-  } catch {
+  } catch (error) {
+    // Logged, not swallowed. This call site passed an ArrayBuffer to a mammoth
+    // option that only exists in its browser build, so every .docx failed here
+    // too — and the bare `catch {}` that used to sit here hid the reason.
+    console.error(
+      `Script extraction failed for ${v.fileName} (chapter ${v.chapterNumber}):`,
+      error,
+    );
     // A corrupt or mislabelled file. Specific, because "upload failed" would
     // send an operator to check their connection over a bad document.
     return actionError(

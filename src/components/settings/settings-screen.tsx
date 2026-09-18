@@ -11,9 +11,19 @@ import {
   type SettingsValues,
 } from "@/components/settings/settings-form";
 import { updateAppSettings } from "@/app/actions/settings";
+import type { TeamMemberRecord } from "@/app/actions/team";
 import type { AppSettings } from "@/lib/queries";
 
-export function SettingsScreen({ settings }: { settings: AppSettings }) {
+export function SettingsScreen({
+  settings,
+  teamMembers,
+  teamLoadError,
+}: {
+  settings: AppSettings;
+  /** Passed through to the Team card — see SettingsForm. */
+  teamMembers: TeamMemberRecord[];
+  teamLoadError?: string | null;
+}) {
   const form = useSettingsForm(settings);
   const [formError, setFormError] = useState<string | null>(null);
   const [pending, setSaving] = useState(false);
@@ -51,7 +61,12 @@ export function SettingsScreen({ settings }: { settings: AppSettings }) {
           title="Settings"
           action={<SettingsSaveButton pending={pending} />}
         />
-        <SettingsForm onSave={handleSave} formError={formError} />
+        <SettingsForm
+          onSave={handleSave}
+          formError={formError}
+          teamMembers={teamMembers}
+          teamLoadError={teamLoadError}
+        />
       </div>
     </FormProvider>
   );

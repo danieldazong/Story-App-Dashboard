@@ -26,6 +26,7 @@ import { SegmentedControl } from "@/components/ui/segmented-control";
 import { FormatChips } from "@/components/settings/format-chips";
 import { StorageConnectionTest } from "@/components/settings/storage-connection-test";
 import { TeamCard } from "@/components/settings/team-card";
+import type { TeamMemberRecord } from "@/app/actions/team";
 import { DangerZoneCard } from "@/components/settings/danger-zone-card";
 import { MATURITY_LEVELS } from "@/data/maturity-levels";
 import {
@@ -472,9 +473,19 @@ function PublishingDefaultsCard() {
 export function SettingsForm({
   onSave,
   formError,
+  teamMembers,
+  teamLoadError,
 }: {
   onSave?: (values: SettingsValues) => void;
   formError?: string | null;
+  /**
+   * Read server-side by the Settings page and passed straight through to the
+   * Team card. This component does nothing with it — the alternative was the
+   * card fetching on mount, which the React Compiler correctly rejects as
+   * setState-in-effect.
+   */
+  teamMembers: TeamMemberRecord[];
+  teamLoadError?: string | null;
 }) {
   const form = useFormContext<SettingsValues>();
 
@@ -497,7 +508,7 @@ export function SettingsForm({
       <StorageCard />
       <UploadDefaultsCard />
       <PublishingDefaultsCard />
-      <TeamCard />
+      <TeamCard initialMembers={teamMembers} loadError={teamLoadError} />
       <DangerZoneCard />
     </form>
   );

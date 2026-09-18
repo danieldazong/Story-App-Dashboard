@@ -1,5 +1,4 @@
-import Link from "next/link";
-import { Button } from "@/components/ui/button";
+import { notFound } from "next/navigation";
 import { Breadcrumbs } from "@/components/shell/breadcrumbs";
 import { BulkImportScreen } from "@/components/books/bulk-import-screen";
 import { QueryErrorCard } from "@/components/shell/query-error-card";
@@ -35,26 +34,8 @@ export default async function BulkImportPage({
 
   const book = bookResult.data;
 
-  if (!book) {
-    return (
-      <div className="flex flex-col gap-6">
-        <Breadcrumbs
-          items={[{ label: "Books", href: "/books" }, { label: "Not found" }]}
-        />
-        <div className="card flex flex-col gap-3 p-6">
-          <h1 className="text-page-title">Book not found</h1>
-          <p className="card__sub-line">
-            This book doesn&apos;t exist or may have been removed.
-          </p>
-          <div>
-            <Button asChild variant="outline">
-              <Link href="/books">Back to books</Link>
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // Absent row only — the failed-read branch above keeps its QueryErrorCard.
+  if (!book) notFound();
 
   // The list view: this screen needs existing chapter numbers to resolve
   // conflicts, never chapter prose. See AGENTS.md, Performance Rules.

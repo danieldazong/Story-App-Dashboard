@@ -1,67 +1,44 @@
 "use client";
 
-import { useEffect } from "react";
-import { Button } from "@/components/ui/button";
+import { RouteErrorCard } from "@/components/shell/route-error-card";
 
 /**
- * Catches a THROWN error anywhere in the dashboard route group.
+ * Catches a THROWN error anywhere in the dashboard route group that a more
+ * specific segment boundary did not already catch.
  *
  * This would not have caught the "Could not count missing audio:" incident —
  * that path returns a QueryResult and never throws, which is why the fix for it
  * lives in lib/db-errors.ts and lib/queries.ts instead. This boundary exists for
- * the paths that genuinely do throw and currently have nothing above them but
- * Next's default error page:
+ * the paths that genuinely do throw:
  *
  *   - requireAdmin() in (dashboard)/layout.tsx calls Clerk's auth(), which is
  *     network I/O to the exact service documented as timing out on this machine
  *     (AGENTS.md, Debugging Playbooks).
  *   - `await params` unwrapping, and any mapper that throws on malformed data.
  *
- * One boundary at the group root rather than six near-identical ones under each
- * segment: the throws it catches mostly originate in the shared layout anyway.
- *
- * `reset()` re-renders the segment without a full navigation, which makes this
- * the first genuine retry affordance in the app — QueryErrorCard's "Try again"
- * is a plain <Link>.
+ * Migrated from `reset()` to `retry()` in prompt 19. On next 16.3.5 both props
+ * exist and they are NOT interchangeable: `reset()` clears error state and
+ * re-renders WITHOUT re-fetching, so against a Supabase read that is still
+ * failing it renders straight back into the same error and reads as a dead
+ * button. `retry()` re-fetches. The comment that used to sit here claimed
+ * `reset()` "re-renders the segment", which described the wrong prop's
+ * behaviour for this version.
  */
 export default function DashboardError({
   error,
-  reset,
+  retry,
 }: {
   error: Error & { digest?: string };
-  reset: () => void;
+  retry: () => void;
 }) {
-  useEffect(() => {
-    // The digest is the only handle on the server-side stack in production,
-    // where the message itself is redacted. Without logging it here there is no
-    // way to correlate a report with a server log line.
-    console.error("Dashboard route error:", error.digest ?? "", error);
-  }, [error]);
-
   return (
-    <div className="flex flex-col gap-6">
-      <div className="card flex flex-col gap-3 border-destructive p-6">
-        <h1 className="card__header-title text-destructive">
-          Something went wrong on this screen
-        </h1>
-        <p className="card__sub-line">
-          This is usually temporary. Trying again often works.
-        </p>
-        {/*
-          The raw message is deliberately not rendered. In production Next
-          redacts it to a generic string anyway, and in development it reads as
-          a stack trace to an operator who cannot act on it — the same reason
-          describeDbError exists for query failures.
-        */}
-        {error.digest && (
-          <p className="font-mono text-mono text-muted">
-            Reference: {error.digest}
-          </p>
-        )}
-        <div className="flex items-center gap-2">
-          <Button onClick={reset}>Try again</Button>
-        </div>
-      </div>
-    </div>
+    <RouteErrorCard
+      error={error}
+      retry={retry}
+      breadcrumbs={[{ label: "Dashboard" }]}
+      parentHref="/books"
+      parentLabel="books"
+      context="this screen"
+    />
   );
 }

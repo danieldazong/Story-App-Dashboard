@@ -45,6 +45,20 @@ export function QueryErrorCard({
           This is usually a temporary connection problem. Retrying often works.
         </p>
       )}
+      {/*
+        A skewed clock is the one failure here with a remedy the operator
+        performs OUTSIDE this app, so the guidance names it. Retrying alone
+        would be a lie for a clock that is permanently wrong rather than
+        momentarily so.
+      */}
+      {kind === "skew" && (
+        <p className="card__sub-line">
+          On Windows, open Settings → Time &amp; language → Date &amp; time and
+          press <span className="font-medium">Sync now</span>. Your sign-in
+          token is stamped with this computer&apos;s clock, so it&apos;s
+          rejected when the two drift apart.
+        </p>
+      )}
       <div>
         <Button asChild variant="outline">
           <Link href={retryHref}>Try again</Link>

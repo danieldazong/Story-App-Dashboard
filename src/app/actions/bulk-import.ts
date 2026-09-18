@@ -74,7 +74,6 @@ const rowSchema = z.object({
   status: z.enum([
     "new_chapter",
     "replaces_script",
-    "no_number",
     "duplicate_number",
     "unreadable_file",
   ]),
@@ -353,13 +352,23 @@ export async function ingestImportedScript(
   try {
     raw =
       extension === ".docx"
-        ? await extractDocxTextFromBuffer(await blob.arrayBuffer())
+        ? await extractDocxTextFromBuffer(
+            Buffer.from(await blob.arrayBuffer()),
+          )
         : await blob.text();
-  } catch {
+  } catch (error) {
+    // Log the real exception. A bare `catch {}` here swallowed
+    // `Could not find file in options` — a wrong mammoth call shape that broke
+    // every .docx — and surfaced it as a generic "text not imported", which
+    // read like a bad document and cost several rounds of guessing.
+    console.error(
+      `Bulk import: .docx extraction failed for ${v.fileName} (chapter ${v.chapterNumber}):`,
+      error,
+    );
     await client.storage.from("scripts").remove([v.path]);
     return {
       ...actionError(
-        "Chapter created, text not imported. Fix in the chapter editor.",
+        "Chapter created, but this file couldn't be read. It may be corrupt or password-protected. Fix in the chapter editor.",
       ),
       kind: "unreadable_file",
     };
@@ -374,10 +383,15 @@ export async function ingestImportedScript(
     // The object is in storage but nothing will reference it. The CHAPTER stays
     // — deleting it would discard a row the operator may have edited, and a
     // chapter with no script is recoverable from the chapter editor.
+    //
+    // Deliberately worded differently from the extraction failure above: "read
+    // the file but found nothing in it" and "could not read the file at all"
+    // send an operator to different remedies, and sharing one message meant the
+    // screen could not distinguish them.
     await client.storage.from("scripts").remove([v.path]);
     return {
       ...actionError(
-        "Chapter created, text not imported. Fix in the chapter editor.",
+        "Chapter created, but this file contains no text. Fix in the chapter editor.",
       ),
       kind: "unreadable_file",
     };

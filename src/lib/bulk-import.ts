@@ -18,10 +18,14 @@ export type ParsedFileName = {
   title: string;
 };
 
+/**
+ * `no_number` was removed after it shipped as a dead end — see the comment in
+ * evaluateBatch. A file with no number in its name is assigned one continuing
+ * from the book's highest chapter, which is a resolution, not a problem.
+ */
 export type BatchRowStatus =
   | "new_chapter"
   | "replaces_script"
-  | "no_number"
   | "duplicate_number"
   | "unreadable_file";
 
@@ -59,8 +63,13 @@ const EXTENSION = /\.[^.]+$/;
 /**
  * Separators operators actually produce between a chapter number and its title:
  * underscores, hyphens, en/em dashes, dots, and runs of spaces.
+ *
+ * The `g` flag is load-bearing. Without it `String.replace` substitutes only the
+ * FIRST match, so `Say_It_Before_You_Stop_Trying` became `Say It_Before_You_Stop_Trying`
+ * — one separator converted, the rest left as underscores, which reads as a
+ * truncated title rather than an unreplaced one.
  */
-const SEPARATORS = /[\s._\-–—]+/;
+const SEPARATORS = /[\s._\-–—]+/g;
 
 /**
  * Leading chapter-number patterns, most specific first.
@@ -199,9 +208,6 @@ export function evaluateBatch(
       // An override that is blanked out falls back rather than importing a
       // chapter with no title at all.
       title: title === "" ? parsed.title : title,
-      // Only rows with no number from EITHER source need operator attention.
-      // An auto-assigned number is a suggestion, not a resolution.
-      needsNumber: number === null,
     };
   });
 
@@ -216,15 +222,25 @@ export function evaluateBatch(
   const evaluated: BatchRow[] = resolved.map((entry) => {
     const { row } = entry;
 
+    // `no_number` is deliberately absent here.
+    //
+    // It was a dead end: a row whose filename carried no number was allocated
+    // one, rendered that number into an editable input, and then reported "No
+    // number found" with its checkbox disabled — the screen showing a resolved
+    // number while the status denied it, and the only way out being to retype
+    // the number already on display.
+    //
+    // An allocated number IS a resolution. It continues from the book's highest
+    // chapter and skips anything claimed, so it is a usable default the operator
+    // can override in the input. The status now describes what the import will
+    // actually do with it.
     const status: BatchRowStatus = row.unreadable
       ? "unreadable_file"
       : (counts.get(entry.number) ?? 0) > 1
         ? "duplicate_number"
-        : entry.needsNumber
-          ? "no_number"
-          : existing.has(entry.number)
-            ? "replaces_script"
-            : "new_chapter";
+        : existing.has(entry.number)
+          ? "replaces_script"
+          : "new_chapter";
 
     return {
       id: row.id,
@@ -234,21 +250,13 @@ export function evaluateBatch(
       title: entry.title,
       wordCount: row.wordCount ?? null,
       status,
-      blocked:
-        status === "unreadable_file" ||
-        status === "duplicate_number" ||
-        status === "no_number",
+      blocked: status === "unreadable_file" || status === "duplicate_number",
     };
   });
 
-  // Unnumbered rows first so they demand attention, then by chapter number.
-  // Stable within each group by original order.
-  return evaluated.sort((a, b) => {
-    const aNeeds = a.status === "no_number" ? 0 : 1;
-    const bNeeds = b.status === "no_number" ? 0 : 1;
-    if (aNeeds !== bNeeds) return aNeeds - bNeeds;
-    return a.number - b.number;
-  });
+  // Ascending by chapter number. Every row has a real number now, so there is
+  // no longer an "needs attention" group to float to the top.
+  return evaluated.sort((a, b) => a.number - b.number);
 }
 
 /** Whether a row may be imported. Blocked rows can never be checked. */

@@ -1,5 +1,28 @@
 # 09-upload-queue
 
+> **SUPERSEDED (2026-09-18) — do not implement this prompt.**
+>
+> Every premise below is now false:
+>
+> - It reads the activity fixture from `data/mock-activity.ts`, **deleted in prompt 13** when
+>   every mock read was replaced with a real query.
+> - It mounts at `app/(dashboard)/uploads/page.tsx`. That route and its sidebar item were
+>   **deliberately removed** — they were empty placeholders, and a nav item pointing at nothing
+>   is worse than no nav item (see AGENTS.md, A6/A7).
+> - It specifies simulated progress: *"no network, no storage, no real files leave the
+>   browser."* Real uploads landed in prompts 15, 16, 17 and 10.
+>
+> **The work this screen would have done already exists, closer to where it is needed.**
+> Per-file progress lives inside the cover, narration and script cards; batch progress lives on
+> `/books/<id>/import` (prompt 10); and the Books list shows per-book completion ratios. An
+> Active uploads card would now be a fourth copy of progress UI, duplicating surfaces that
+> already own it.
+>
+> Prompt 19 was rewritten to drop the `loading.tsx` and `error.tsx` files it specified for
+> these routes. If an upload-queue screen is ever genuinely wanted, write a new prompt against
+> the real upload paths — do not implement this one, and re-add the sidebar item and the route
+> in the same change so the nav never points at an empty page again.
+
 Read AGENTS.md first and follow it strictly.
 
 Implement the Upload Queue screen. **There is no design frame for this screen** — build it from the specification below, using the design system tokens, type utilities and card patterns already established on the Books, Book editor and Settings screens. Visual consistency with those screens is the fidelity target.

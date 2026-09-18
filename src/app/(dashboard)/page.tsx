@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {
@@ -10,28 +11,26 @@ import {
 import { PageHeader } from "@/components/shell/page-header";
 import { AttentionRow } from "@/components/shell/attention-row";
 import { QueryErrorCard } from "@/components/shell/query-error-card";
-import { serverSupabase } from "@/lib/server-supabase";
 import {
-  getDashboardCounts,
-  getNeedsAttention,
-  getRecentActivity,
-} from "@/lib/queries";
+  RecentActivityFallback,
+  RecentActivityList,
+} from "@/components/shell/recent-activity-card";
+import { serverSupabase } from "@/lib/server-supabase";
+import { getDashboardCounts, getNeedsAttention } from "@/lib/queries";
 
 const MAX_VISIBLE_ATTENTION_ROWS = 10;
 
-function formatTime(timestamp: string): string {
-  const date = new Date(timestamp);
-  return `${String(date.getHours()).padStart(2, "0")}:${String(
-    date.getMinutes(),
-  ).padStart(2, "0")}`;
-}
+// formatTime moved to components/shell/recent-activity-card.tsx along with the
+// activity list it served — this page had no other caller.
 
 export default async function DashboardPage() {
   const client = await serverSupabase();
-  const [counts, attention, activity] = await Promise.all([
+  // Recent activity is deliberately NOT awaited here. It streams inside its own
+  // Suspense boundary below, so the tiles and the work queue — the reason an
+  // operator opens this screen — no longer wait on a third round trip.
+  const [counts, attention] = await Promise.all([
     getDashboardCounts(client),
     getNeedsAttention(client),
-    getRecentActivity(client),
   ]);
 
   // A failed count is not an empty catalog.
@@ -201,31 +200,9 @@ export default async function DashboardPage() {
         <div className="card__header p-6 pb-4">
           <h2 className="card__header-title">Recent activity</h2>
         </div>
-        {!activity.ok ? (
-          <div className="px-6 pb-6">
-            <QueryErrorCard
-              message={activity.error}
-              kind={activity.kind}
-              retryHref="/"
-            />
-          </div>
-        ) : activity.data.length === 0 ? (
-          <p className="card__sub-line px-6 pb-6">No recent activity.</p>
-        ) : (
-          <div className="flex flex-col">
-            {activity.data.map((entry) => (
-              <div
-                key={entry.id}
-                className="flex items-baseline gap-4 border-b border-border px-6 py-3 last:border-0"
-              >
-                <span className="w-14 shrink-0 font-mono text-mono text-muted">
-                  {formatTime(entry.timestamp)}
-                </span>
-                <span className="text-body text-text">{entry.message}</span>
-              </div>
-            ))}
-          </div>
-        )}
+        <Suspense fallback={<RecentActivityFallback />}>
+          <RecentActivityList />
+        </Suspense>
       </div>
     </div>
   );

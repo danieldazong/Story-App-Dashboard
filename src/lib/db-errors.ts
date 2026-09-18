@@ -19,7 +19,12 @@
  * its own. Telling an operator to check their account access after a dropped
  * packet sends them to audit Clerk roles for a fault that fixes itself.
  */
-export type DbErrorKind = "permission" | "conflict" | "network" | "unknown";
+export type DbErrorKind =
+  | "permission"
+  | "conflict"
+  | "network"
+  | "skew"
+  | "unknown";
 
 type DbError = { code?: string; message: string };
 
@@ -51,6 +56,33 @@ export function isNetworkError(message: string): boolean {
 }
 
 /**
+ * A token rejected for TIMING rather than for content.
+ *
+ * Clerk stamps a token's `nbf`/`iat` from the client's clock and its `exp` from
+ * the same; Postgres validates against its own. A client running even two
+ * seconds behind therefore mints tokens that are "not yet valid" on arrival, and
+ * one running ahead produces tokens that read as already expired.
+ *
+ * This is the only failure class in this file that fixes itself by WAITING —
+ * the token becomes valid the moment the skew elapses. It is neither a
+ * permission problem (the account is fine) nor a network one (the request
+ * arrived and was understood), and classifying it as either sends an operator
+ * to audit Clerk roles or their wifi for a clock problem.
+ *
+ * Observed on this project: a dev machine 2-3s behind Supabase, which surfaced
+ * on bulk import because its preflight fires three queries the instant the
+ * button is clicked — the tightest mint-to-use gap anywhere in the app.
+ */
+export function isSkewError(message: string): boolean {
+  return (
+    /jwt\s*(is\s*)?not\s*yet\s*valid/i.test(message) ||
+    /token\s*used\s*before\s*issued/i.test(message) ||
+    /\bnbf\b/i.test(message) ||
+    /jwt\s*(is\s*)?expired/i.test(message)
+  );
+}
+
+/**
  * Classifies a failure.
  *
  * Code tests come FIRST, before the empty-message check: an error can carry a
@@ -65,6 +97,12 @@ export function classifyDbError(error: DbError): DbErrorKind {
   }
   if (error.code === "23505") {
     return "conflict";
+  }
+  // Before the network test: a skewed token is a specific, self-healing fault
+  // with its own remedy, and "check your connection" would send an operator
+  // looking in the wrong place entirely.
+  if (isSkewError(error.message)) {
+    return "skew";
   }
   if (hasNoMessage(error.message) || isNetworkError(error.message)) {
     return "network";
@@ -97,6 +135,10 @@ export function describeDbError(error: DbError): string {
       return "That value is already taken.";
     case "network":
       return "Couldn't reach the database. Check your connection and try again.";
+    case "skew":
+      // Names the actual remedy. "Try again" alone would be a lie for a clock
+      // that is permanently wrong rather than momentarily so.
+      return "Your computer's clock is out of step with the server, so your sign-in token was rejected. Sync your system clock and try again.";
     case "unknown":
       return error.message;
   }
