@@ -7,7 +7,7 @@ export default function NotAuthorisedPage() {
       <div className="card flex max-w-[420px] flex-col gap-3 p-6">
         <h1 className="text-page-title">Not authorised</h1>
         <p className="card__sub-line">
-          This account doesn&apos;t have operator access to the NovelNow
+          This account doesn&apos;t have operator access to the Talebrim
           dashboard.
         </p>
         <div>

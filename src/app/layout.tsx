@@ -16,8 +16,8 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "NovelNow Admin",
-  description: "Internal content management dashboard for NovelNow",
+  title: "Talebrim Admin",
+  description: "Internal content management dashboard for Talebrim",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

@@ -47,7 +47,7 @@ export default function GlobalError({
   return (
     <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable}`}>
       <body className="font-sans bg-page text-text">
-        <title>Something went wrong — NovelNow Admin</title>
+        <title>Something went wrong — Talebrim Admin</title>
         <div className="flex min-h-screen items-center justify-center p-6">
           <div className="card flex w-full max-w-[480px] flex-col gap-3 border-destructive p-6">
             <h1 className="card__header-title text-destructive">

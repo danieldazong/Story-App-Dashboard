@@ -6,7 +6,7 @@ export function Sidebar() {
     <aside className="fixed inset-y-0 left-0 flex w-sidebar-width flex-col gap-6 bg-sidebar py-6">
       <div className="px-4">
         <span className="text-[16px] font-semibold leading-none text-white">
-          NovelNow
+          Talebrim
         </span>
       </div>
       <SidebarNav />

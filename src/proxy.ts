@@ -1,30 +1,46 @@
-import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { clerkMiddleware } from "@clerk/nextjs/server";
 
-// Next 16 renamed the `middleware` file convention to `proxy`; the
-// functionality is unchanged (see node_modules/next/dist/docs/01-app/
-// 01-getting-started/16-proxy.md). Clerk's helper keeps its own name.
-// `/accept-invitation` is public because an invited operator has no account
-// yet — they arrive from the invitation email carrying a Clerk ticket. Left
-// out, auth.protect() redirects them to /sign-in before Clerk can read that
-// ticket, which is the same dead end as sending them to Clerk's own domain:
-// a working invitation that cannot be accepted.
-//
-// It is not an open sign-up: the route renders <SignUp>, which Clerk only
-// completes when the request carries a valid `__clerk_ticket`.
-const isPublicRoute = createRouteMatcher([
-  "/sign-in(.*)",
-  "/accept-invitation(.*)",
-]);
-
-export default clerkMiddleware(async (auth, request) => {
-  if (!isPublicRoute(request)) {
-    // Redirects unauthenticated requests to /sign-in. This is the UX layer
-    // only — Next's own proxy docs warn it "should not be used as a full
-    // session management or authorization solution", so the admin role check
-    // lives in the (dashboard) layout, close to the resource.
-    await auth.protect();
-  }
-});
+/**
+ * Clerk's request context, and nothing else.
+ *
+ * Next 16 renamed the `middleware` file convention to `proxy` (see
+ * node_modules/next/dist/docs/01-app/01-getting-started/16-proxy.md);
+ * functionality is unchanged and `next build` still reports it as
+ * `ƒ Proxy (Middleware)`. Clerk's helper keeps its own name.
+ *
+ * WHY THIS FILE NO LONGER GUARDS ANYTHING (2026-09-18)
+ *
+ * It used to call `auth.protect()` on everything except a `createRouteMatcher`
+ * allowlist. `createRouteMatcher` is deprecated, and Clerk's own reason is the
+ * point rather than the deprecation itself: "middleware-based auth checks rely
+ * on path matching, which can diverge from how Next.js routes requests and
+ * leave protected resources reachable." An allowlist is a second, parallel
+ * description of the route tree — one that drifts silently the moment a route
+ * is added, because nothing forces the two to agree.
+ *
+ * Every protected surface now guards itself, at the resource:
+ *
+ *   - `(dashboard)/layout.tsx` calls `requireAdmin()`. Verified on 2026-09-18
+ *     to block a non-admin with this proxy guarding nothing at all — see
+ *     AGENTS.md, Deferred Security Tasks item 5.
+ *   - `/account` calls `requireUser()`. It renders Clerk's <UserProfile> and
+ *     sits outside the dashboard group, so it never passed through
+ *     requireAdmin(); the proxy was genuinely its only guard until now.
+ *   - `/sign-in`, `/accept-invitation` and `/not-authorised` are public by
+ *     design, and no longer need to be named anywhere. `/not-authorised` in
+ *     particular MUST stay reachable by a signed-in non-admin, since
+ *     requireAdmin() redirects to it.
+ *
+ * `clerkMiddleware()` stays mounted with an empty handler, and that is load
+ * bearing: `auth()` THROWS when it cannot detect it, so removing this file
+ * breaks every server-side auth call rather than merely removing a redirect.
+ * That failure was mistaken for a passing security test on 2026-09-18.
+ *
+ * One behaviour change, deliberate: an unauthenticated visitor to a dashboard
+ * route is now redirected by `requireAdmin()` rather than by the proxy. Same
+ * destination (`/sign-in`), one layer later.
+ */
+export default clerkMiddleware();
 
 export const config = {
   matcher: [

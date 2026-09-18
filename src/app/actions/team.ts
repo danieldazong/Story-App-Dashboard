@@ -235,6 +235,20 @@ export async function inviteTeamMember(input: {
       });
     }
 
+    // Clerk refuses invitations entirely when the instance does not accept
+    // email addresses for sign-up: 400 `invitations_not_supported`. Confirmed
+    // against the live instance by turning the toggle off and retrying.
+    //
+    // This is a CONFIGURATION fault, not a transport one, so it must not fall
+    // through to "check your connection" — that sent an operator to debug
+    // their network over a setting they had just changed themselves. Naming
+    // the toggle is the whole value of this branch.
+    if (codes.includes("invitations_not_supported")) {
+      return actionError(
+        "Invitations are turned off for this Clerk instance. Re-enable Configure → User & authentication → Sign-up with email, or add this operator directly in the Clerk Dashboard.",
+      );
+    }
+
     return actionError(
       "Couldn't send the invitation. Check your connection and try again.",
     );

@@ -1066,14 +1066,68 @@ Use:
 These are known, accepted-for-now gaps, deliberately deferred while the dashboard is still being built against a Clerk **development** instance. None is safe to carry into production. Work through this list before the first real deployment, and delete each line only once it is actually done.
 
 1. **Rotate the Clerk secret key.** The current `CLERK_SECRET_KEY` in `.env` was exposed in an assistant conversation on 2026-09-16 (read out of the file into a chat transcript). `.env` is gitignored and was confirmed untracked, and the key showed "Never used" in the Clerk Dashboard at the time, so there is no evidence of misuse — but it has left its intended home and must be replaced. Clerk has no in-place "regenerate": API keys → **+ Add new key** → put the new value in `.env` → **then** delete the old `default` key (in that order, or there is a window with no working key).
-2. **Turn off "Sign-up with email"** in Clerk → Configure → User & authentication. This app has **no sign-up route** by design (see Clerk Rules) and operators are provisioned in the Dashboard, but Clerk's hosted sign-up URL is reachable while this toggle is on. Anyone signing up that way is correctly blocked by the admin role gate and lands on `/not-authorised` — so this is junk-user-record hygiene, not an open door. Left on during development only so Dashboard-side user creation is not disrupted.
-3. **Provision a production Clerk instance.** Development instance keys (`pk_test_`/`sk_test_`) and the dev issuer domain must not ship. A production instance has a different issuer, which means Supabase Third-Party Auth has to be registered a second time against it (see Supabase Rules) — plan that alongside prompt 12 rather than after it.
-4. **Migrate off `createRouteMatcher`.** Clerk now emits a deprecation warning at dev-server boot: it "is deprecated and will be removed in the next major release", and the recommendation is resource-based auth checks moved into each page/layout/route, because "middleware-based auth checks rely on path matching, which can diverge from how Next.js routes requests and leave protected resources reachable." Migration guide: `clerk.com/docs/guides/development/upgrading/upgrade-guides/migrate-from-create-route-matcher`. Not urgent — this codebase **already** does the resource-based half (`requireAdmin()` in the `(dashboard)` layout is the real authorisation boundary), so `src/proxy.ts` is only handling the unauthenticated redirect. Prompt 11 specified `createRouteMatcher` explicitly, so it stays until a deliberate migration pass.
+2. ~~**Turn off "Sign-up with email"**~~ — **DO NOT DO THIS. Tested 2026-09-18 and it breaks a working feature.**
+
+   Turning that toggle off makes Clerk refuse every invitation with `400 invitations_not_supported` — *"Invitations are only supported on instances that accept email addresses."* It fails at **send**, so the Team card's `Invite member` stops working entirely; it is not a subtlety about ticketed acceptance. **Task 2 and the invitation flow are mutually exclusive**, and the invitation flow is the one this app actually uses to provision operators (see Clerk Rules, `/accept-invitation`).
+
+   The original reasoning still stands on its own terms — Clerk's hosted sign-up URL is reachable while the toggle is on — but the exposure it describes is small and the cost of closing it is large:
+
+   - Anyone who self-signs-up gets **no role**, so `requireAdmin()` sends them to `/not-authorised`. Task 5's verification proves that guard holds without the proxy. They can see nothing.
+   - The residue is a junk Clerk user record, which the Team card now renders honestly as **No access**.
+
+   **Trading a working invite flow for junk-record hygiene is the wrong trade.** Leave the toggle on.
+
+   If self-signup ever must be closed, the options are: provision operators directly in the Clerk Dashboard and drop invitations entirely; or move to Clerk Organizations, where organization invitations follow different rules. Both are larger changes than this line implies, and neither is a toggle.
+
+   `inviteTeamMember` now recognises `invitations_not_supported` and names the toggle, rather than reporting a connection failure — the request reaches Clerk and is deliberately refused, so "check your connection" sent an operator to debug their network over a setting they had just changed.
+3. **Provision a production Clerk instance.** **BLOCKED, deliberately — no domain owned and no deploy planned as of 2026-09-18.** Verified that day: the instance reports `environment_type: "development"` with one domain, `cheerful.walleye-3066.lcl.dev` (Clerk's auto-generated dev domain), and the repo has no deploy config at all — no `vercel.json`, no `netlify.toml`, no Dockerfile.
+
+   **This is not a standalone task. It is one step inside deploying the app**, because a production instance needs DNS records on a domain resolving to a live origin. Creating one with nowhere to point it just means maintaining two instances and swapping keys by hand. Do not start it before there is a domain and a deploy target.
+
+   **Four symptoms already hit separately all trace to this one cause.** Recorded together so they stop being rediscovered as unrelated bugs — every one of them is correct behaviour for a development instance, and every one disappears when this task is done:
+
+   | Symptom | Why |
+   |---|---|
+   | Invitation emails land in spam | Sent from `invitations@accounts.dev`, a domain shared by every Clerk dev instance, with no SPF/DKIM/DMARC alignment to this app |
+   | `[Development]` prefix in the subject line | Added automatically by Clerk on dev instances; not editable in the email template |
+   | "Development mode" badge under `<UserButton />` | Rendered by Clerk whenever the key is `pk_test_`; no appearance option removes it |
+   | `pk_test_` / `sk_test_` keys in `.env` | The instance itself |
+
+   None is worth chasing individually. Three of them were investigated as separate problems on 2026-09-18 before the common cause was obvious.
+
+   **When it is time, the order matters and step 5 is the one that gets missed:**
+
+   1. Deploy the app to a host
+   2. Point the domain at it
+   3. Create the production Clerk instance (Dashboard → environment switcher → Production)
+   4. Add Clerk's DNS records, **including `clkmail`** — that subdomain is what moves invitations out of spam
+   5. **Re-register the issuer in Supabase → Authentication → Third-Party Auth.** A production instance has a *different issuer domain*, and RLS validates tokens against the registered issuer. Miss this and every policy stops recognising every token: the app signs in fine and then reads nothing, which looks like a total data failure rather than an auth setting.
+   6. Swap to `pk_live_` / `sk_live_` in the deployed environment only — local `.env` stays on the dev instance
+   7. Set `NEXT_PUBLIC_APP_URL` to the real origin, or every invitation link will point at `localhost:3000`
+4. ~~**Migrate off `createRouteMatcher`.**~~ — **done 2026-09-18.**
+
+   `src/proxy.ts` no longer imports it and no longer guards anything: it mounts `clerkMiddleware()` with an empty handler. Clerk's stated reason for the deprecation is what drove the shape, not the deprecation itself — *"middleware-based auth checks rely on path matching, which can diverge from how Next.js routes requests and leave protected resources reachable."* An allowlist is a second, parallel description of the route tree, and nothing forces the two to agree when a route is added.
+
+   Every protected surface now guards itself at the resource:
+
+   | Route | Guard |
+   |---|---|
+   | `(dashboard)/*` | `requireAdmin()` in the group layout — proven standalone by item 5 |
+   | `/account` | **`requireUser()`, added by this migration** |
+   | `/sign-in`, `/accept-invitation`, `/not-authorised` | public by design, no longer named anywhere |
+
+   **`/account` was the real find.** It renders Clerk's `<UserProfile>` and sits outside the `(dashboard)` group, so it never passed through `requireAdmin()` — the proxy's `auth.protect()` was its only guard. Deleting the matcher without noticing would have left a signed-out visitor able to reach it. `requireUser()` rather than `requireAdmin()`, deliberately: a non-admin must still be able to manage credentials on an account they legitimately hold.
+
+   **`clerkMiddleware()` stays mounted, and that is load-bearing.** `auth()` throws when it cannot detect it, so deleting the file breaks every server-side auth call rather than merely removing a redirect — the failure mistaken for a passing security test earlier the same day (see item 5).
+
+   One deliberate behaviour change: an unauthenticated visitor to a dashboard route is now redirected by `requireAdmin()` rather than by the proxy. Same destination, one layer later. Prompt 11 specified `createRouteMatcher` explicitly, so this supersedes that part of it.
 5. **Re-run prompt 11's verification against live sessions.** ~~Confirm a signed-in user *without* `role: admin` cannot reach `/`, `/books` or `/settings`~~ — **done 2026-09-18.** Verified with two real Clerk users against the development instance: the non-admin was redirected to `/not-authorised` on all three routes. `requireAdmin()`'s redirect path is confirmed working.
 
-   **The second half is still open, and the test this line used to describe does not work.** It said to delete `src/proxy.ts` and confirm `requireAdmin()` still blocks. It does not isolate anything: Clerk's `auth()` **throws** when it cannot detect `clerkMiddleware`, so removing the proxy makes the `(dashboard)` layout throw before any role check runs. The throw lands in `global-error.tsx` (it is above every segment boundary), which blocks admin and non-admin identically — so the test can only ever produce a crash, and a crash proves nothing about authorisation. Attempted 2026-09-18 and it produced exactly that.
+   **The second half is also done — 2026-09-18.** With `auth.protect()` commented out and `clerkMiddleware` still mounted, a signed-in non-admin visiting `/books` still landed on `/not-authorised`. That is `requireAdmin()` in the `(dashboard)` layout blocking on its own, with the proxy guarding nothing. **Authorisation is not proxy-dependent**, which is the entire reason the role check lives in the layout rather than the proxy. `auth.protect()` was restored immediately afterwards.
 
-   **The test that does work** keeps `clerkMiddleware` mounted so `auth()` retains its context, and disables only the guarding:
+   **The test described here originally does NOT work, and must not be used again.** It said to delete `src/proxy.ts` and confirm `requireAdmin()` still blocks. That isolates nothing: Clerk's `auth()` **throws** when it cannot detect `clerkMiddleware`, so removing the proxy makes the layout throw before any role check runs. The throw lands in `global-error.tsx` (above every segment boundary) and blocks admin and non-admin identically — a crash, not an authorisation decision. Attempted first on 2026-09-18 and it produced exactly that, and was briefly recorded as a pass before a probe showed the error page was a crash rather than the redirect.
+
+   **The version that works** keeps `clerkMiddleware` mounted so `auth()` retains its request context, and disables only the guarding:
 
    ```ts
    export default clerkMiddleware(async (auth, request) => {
@@ -1083,7 +1137,9 @@ These are known, accepted-for-now gaps, deliberately deferred while the dashboar
    });
    ```
 
-   Nothing throws, the proxy stops blocking, and a non-admin still landing on `/not-authorised` is `requireAdmin()` doing it alone. **Run this before production** — it is the only check that proves authorisation is not proxy-dependent, which is the whole reason the guard lives in the layout rather than the proxy.
+   Re-run it this way after any change to `proxy.ts`, `lib/auth.ts`, or the `(dashboard)` layout. **Never commit it commented out** — while it is, the app has no unauthenticated redirect at all.
+
+   > **The lesson, which generalises past this test.** "Still blocked" is not the same finding as "blocked by the layer I was testing". The first attempt produced a blocked page and was read as success; only checking *which* mechanism blocked revealed it was a crash that blocked everyone. When a test's pass condition is "access is denied", confirm the denial came from the thing under test.
 
 ## Prompt Series Notes
 

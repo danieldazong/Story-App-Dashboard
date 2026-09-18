@@ -14,6 +14,34 @@ export async function isAdmin(): Promise<boolean> {
 }
 
 /**
+ * Guard for routes that need a signed-in user but NOT the admin role.
+ *
+ * Exactly one route needs this: `/account`, which renders Clerk's own
+ * `<UserProfile>`. It sits outside the `(dashboard)` group — deliberately, so
+ * it renders Clerk's full-width surface rather than the sidebar shell — and so
+ * it never passed through `requireAdmin()`.
+ *
+ * Until the createRouteMatcher migration it was protected by `auth.protect()`
+ * in the proxy. That protection was real but path-based, which is precisely
+ * what Clerk deprecated: "middleware-based auth checks rely on path matching,
+ * which can diverge from how Next.js routes requests and leave protected
+ * resources reachable". This moves the check onto the resource itself.
+ *
+ * Deliberately NOT requireAdmin(): a signed-in non-admin must still be able to
+ * manage their own credentials. Locking them out of /account would leave them
+ * with no way to change a password on an account they legitimately hold.
+ */
+export async function requireUser(): Promise<string> {
+  const { userId } = await auth();
+
+  if (!userId) {
+    redirect("/sign-in");
+  }
+
+  return userId;
+}
+
+/**
  * Guard for Server Components, Server Actions and Route Handlers. Returns the
  * Clerk user id of the calling admin, or redirects.
  *

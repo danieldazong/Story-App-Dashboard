@@ -27,7 +27,7 @@ export default function AcceptInvitationPage() {
     <main className="flex min-h-screen items-center justify-center bg-page px-page-padding">
       <div className="flex flex-col items-center gap-6">
         <span className="text-[16px] font-semibold leading-none text-text">
-          NovelNow
+          Talebrim
         </span>
         <SignUp
           appearance={clerkAppearance}
