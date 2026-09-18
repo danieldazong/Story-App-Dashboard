@@ -256,9 +256,14 @@ export function ChapterEditorScriptCard({
     }
 
     setState({ status: "idle" });
-    // The row is the truth now. Refresh rather than pushing text back through
-    // react-hook-form, which would mark the form dirty over work already saved
-    // — the same reason narration stopped feeding `audioDirty`.
+    // The row is the truth now, so refresh rather than pushing text back up
+    // through this card — that would mark the form dirty over work already
+    // saved, the same reason narration stopped feeding `audioDirty`.
+    //
+    // The refresh alone was NOT enough: react-hook-form seeds its values once
+    // at mount and ignores the refreshed `chapter` prop, so the textarea stayed
+    // empty until a manual browser reload. ChapterEditor now re-seeds the form's
+    // baseline when the server row's script changes — see the effect there.
     onUploaded();
   }
 

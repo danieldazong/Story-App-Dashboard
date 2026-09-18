@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -87,6 +87,93 @@ export function ChapterEditor({
     const interval = setInterval(() => forceTick((tick) => tick + 1), 30_000);
     return () => clearInterval(interval);
   }, []);
+
+  /**
+   * Re-seed the form when the SERVER row's script changes underneath it.
+   *
+   * `useForm` reads `defaultValues` once, at mount. `router.refresh()` refetches
+   * the route and React hands this component a new `chapter` prop — but
+   * react-hook-form does not re-seed from a changed prop, so the textarea kept
+   * showing whatever it was born with. Uploading a script persisted correctly,
+   * revalidated correctly, and then displayed nothing until a manual browser
+   * reload: 0 words over a 50,978-word file.
+   *
+   * The file-name row updated instantly the whole time, because it reads
+   * `chapter.script` directly rather than through the form. That asymmetry is
+   * what made it look like the upload had failed.
+   *
+   * `resetDefaultValues`, deliberately, and not the two obvious alternatives:
+   *
+   *   - `reset()` re-registers every field and re-runs the schema, cascading
+   *     setState into sibling Controllers during render ("Cannot update a
+   *     component while rendering a different component"). That defect has been
+   *     fixed three times in this codebase — see AGENTS.md, Debugging Playbooks.
+   *   - `setValue()` would mark the form dirty over text the server has already
+   *     stored, leaving `Save chapter` enabled with nothing to write.
+   *
+   * resetDefaultValues moves the clean baseline, so the new prose shows AND the
+   * form reads as saved, which it is.
+   *
+   * Guarded on the row's own values rather than on prop identity: `chapter` is a
+   * fresh object on every refresh, so keying on the object would re-seed on
+   * every render and discard in-progress typing. This only fires when the stored
+   * text or the stored file actually differs from the baseline this form was
+   * seeded with.
+   *
+   * Note this DOES replace unsaved edits when an upload completes — correctly:
+   * the upload is the newer truth, and the Replace dialog already warns that
+   * inline edits will be lost.
+   */
+  const serverScriptText =
+    chapter.script.state === "ready" ? chapter.script.text : "";
+  const serverScriptFileName =
+    chapter.script.state === "ready" ? chapter.script.fileName : null;
+
+  // The comparison baseline is a ref, NOT form.formState.defaultValues.
+  //
+  // That was this fix's first attempt and it silently did nothing.
+  // `formState` is a Proxy backed by RHF's `_proxyFormState`, which only marks
+  // a field as subscribed when it is read during RENDER. Reading
+  // `formState.defaultValues` solely inside an effect never registers the
+  // subscription, so the effect closed over a mount-time snapshot, the guard
+  // compared new server text against the original empty string, found them
+  // "equal" to its stale copy, and early-returned on every upload.
+  //
+  // A ref has no subscription semantics to get wrong. It holds exactly what
+  // this component last seeded, which is the only question being asked.
+  const seededScript = useRef({
+    text: serverScriptText,
+    fileName: serverScriptFileName,
+  });
+
+  useEffect(() => {
+    if (
+      seededScript.current.text === serverScriptText &&
+      seededScript.current.fileName === serverScriptFileName
+    ) {
+      return;
+    }
+
+    seededScript.current = {
+      text: serverScriptText,
+      fileName: serverScriptFileName,
+    };
+
+    form.resetDefaultValues({
+      ...form.getValues(),
+      scriptText: serverScriptText,
+      scriptFileName: serverScriptFileName,
+    });
+    // setValue in addition to resetDefaultValues: the former moves the clean
+    // baseline, but `watch()` reads the VALUES, and resetDefaultValues does not
+    // touch those. Without this the baseline updated while the textarea kept
+    // rendering the old (empty) value — the same "persisted but not displayed"
+    // symptom, one layer down.
+    form.setValue("scriptText", serverScriptText, { shouldDirty: false });
+    form.setValue("scriptFileName", serverScriptFileName, {
+      shouldDirty: false,
+    });
+  }, [form, serverScriptText, serverScriptFileName]);
 
   // The await stays outside any transition: React may be mid-render when a
   // transition's continuation resumes, and react-hook-form's setError/reset
