@@ -2,6 +2,8 @@ import { QueryErrorCard } from "@/components/shell/query-error-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { serverSupabase } from "@/lib/server-supabase";
 import { getRecentActivity } from "@/lib/queries";
+import { activityGroupLabel, groupActivity } from "@/lib/catalog";
+import type { ActivityGroup } from "@/lib/catalog";
 
 /**
  * The Dashboard's Recent activity card, extracted so it can stream.
@@ -14,6 +16,13 @@ import { getRecentActivity } from "@/lib/queries";
  * Dashboard for; this card is reference material. On a ~450ms-per-query
  * database (AGENTS.md, Performance Rules) letting it resolve separately gets
  * the useful half of the screen up a full round trip sooner.
+ *
+ * Still a Server Component after the grouping pass. Collapsing runs of similar
+ * events needs an expand affordance, and the obvious way to get one is
+ * `useState` — which would make this a Client Component, ship the whole list as
+ * serialised props, and give up the streaming above. `<details>`/`<summary>`
+ * does the same job in the browser with no JavaScript and no state, so the
+ * card keeps streaming and stays server-rendered.
  */
 
 function formatTime(timestamp: string): string {
@@ -40,6 +49,61 @@ export function RecentActivityFallback() {
   );
 }
 
+function ActivityTime({ timestamp }: { timestamp: string }) {
+  return (
+    <span className="w-14 shrink-0 font-mono text-mono text-muted">
+      {formatTime(timestamp)}
+    </span>
+  );
+}
+
+function ActivityRowShell({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex items-baseline gap-4 border-b border-border px-6 py-3 last:border-0">
+      {children}
+    </div>
+  );
+}
+
+function CollapsedGroup({ group }: { group: ActivityGroup }) {
+  if (group.count === 1) {
+    return (
+      <ActivityRowShell>
+        <ActivityTime timestamp={group.timestamp} />
+        <span className="text-body text-text">{group.message}</span>
+      </ActivityRowShell>
+    );
+  }
+
+  return (
+    <details className="group border-b border-border last:border-0">
+      <summary className="flex cursor-pointer list-none items-baseline gap-4 px-6 py-3 hover:bg-page">
+        <ActivityTime timestamp={group.timestamp} />
+        <span className="text-body text-text">
+          {activityGroupLabel(group)}
+        </span>
+        <span className="ml-auto text-helper text-muted group-open:hidden">
+          Show
+        </span>
+        <span className="ml-auto hidden text-helper text-muted group-open:inline">
+          Hide
+        </span>
+      </summary>
+      <div className="flex flex-col bg-page">
+        {group.entries.map((entry) => (
+          <div
+            key={entry.id}
+            className="flex items-baseline gap-4 px-6 py-2 pl-10"
+          >
+            <ActivityTime timestamp={entry.timestamp} />
+            <span className="text-helper text-muted">{entry.message}</span>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 export async function RecentActivityList() {
   const client = await serverSupabase();
   const activity = await getRecentActivity(client);
@@ -60,17 +124,28 @@ export async function RecentActivityList() {
     return <p className="card__sub-line px-6 pb-6">No recent activity.</p>;
   }
 
+  const days = groupActivity(activity.data);
+
+  // No group cap. The card scrolls internally (see the Dashboard's
+  // ACTIVITY_MAX_HEIGHT), so everything fetched is reachable by scrolling —
+  // a cap would hide entries inside a container that already looks scrollable,
+  // which reads as a bug rather than a limit. The `limit` passed to
+  // getRecentActivity is the real bound on how much exists here.
   return (
     <div className="flex flex-col">
-      {activity.data.map((entry) => (
-        <div
-          key={entry.id}
-          className="flex items-baseline gap-4 border-b border-border px-6 py-3 last:border-0"
-        >
-          <span className="w-14 shrink-0 font-mono text-mono text-muted">
-            {formatTime(entry.timestamp)}
-          </span>
-          <span className="text-body text-text">{entry.message}</span>
+      {days.map((day) => (
+        <div key={day.label} className="flex flex-col">
+          {/*
+            Sticky, so the day a row belongs to stays on screen while its rows
+            scroll past. `top-0` works because the scroll container is the
+            card body wrapper on the page, not this element.
+          */}
+          <div className="sticky top-0 z-10 border-b border-border bg-page px-6 py-2">
+            <span className="text-section-label text-muted">{day.label}</span>
+          </div>
+          {day.groups.map((group) => (
+            <CollapsedGroup key={group.id} group={group} />
+          ))}
         </div>
       ))}
     </div>

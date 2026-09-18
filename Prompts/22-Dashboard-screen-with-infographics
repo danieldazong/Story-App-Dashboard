@@ -1,0 +1,294 @@
+# 22-dashboard-infographic-redesign
+
+Read AGENTS.md first. Then read this entire file before writing code.
+
+## §0 · WHAT THIS IS
+
+The Dashboard currently renders three number tiles, a flat "Needs attention" table and a
+20-row activity log. See @prompt_material/16-dashboard-current.png. It displays data but
+does not explain it. The single most important fact on that screen — 20 of 22 chapters
+have no narration — is buried in a tile labelled by its negative.
+
+Rebuild the Dashboard as a production-readiness view: what is finished, what is blocked,
+and what to work on next, legible in about three seconds.
+
+This is a REDESIGN of one screen. Scope boundaries in §10.
+
+## §0.1 · STOP GATE — DEPENDENCY APPROVAL
+
+This work needs a charting library. Recommendation: **recharts**, via the shadcn/ui Chart
+component, because you already use shadcn and its chart primitives are built on Recharts
+with composition in mind — you compose Recharts elements and theme them through CSS
+variables, so the existing token system carries over intact.
+
+AGENTS.md forbids adding a dependency without explicit approval. STOP here. Report the
+recommendation, the approximate bundle cost, and wait.
+
+If approval is DENIED, build every visual in §3–§6 with CSS only. Stacked bars, progress
+bars and the sparkline are all achievable with flex widths and a small inline SVG
+polyline. Say so and proceed — a denial is not a blocker, it changes the technique.
+
+Do not install anything else. No D3, no Chart.js, no animation library, no icon pack.
+
+## §0.2 · EXECUTION ORDER
+
+Step 1 → §1 Terminology reconciliation. STOP and report.
+Step 2 → §2 Aggregation functions in lib/
+Step 3 → §3 Row 1 — readiness strip
+Step 4 → §4 Row 2 — metric tiles
+Step 5 → §5 Row 3 — per-book completion
+Step 6 → §6 Row 4 — access mix + activity sparkline
+Step 7 → §7 Row 5 — Needs attention, rebuilt
+Step 8 → §8 Row 6 — Recent activity, grouped
+Step 9 → §9 Empty and edge states
+Step 10 → §10 Constraints
+Step 11 → §11 Verification
+
+One summary line per step naming the files you touched.
+
+## §1 · STEP 1 — TERMINOLOGY RECONCILIATION
+
+The running app and the documentation disagree. The screenshot shows brand "Talebrim",
+nav item "Stories", and button "New Story". AGENTS.md and prompts 01–21 say "NovelNow",
+"Books", "New book", and the database table is `books`.
+
+Do not guess and do not rename anything yet. Report:
+a. every place the running app says Talebrim / Stories / Story
+b. every place AGENTS.md and the prompt series say NovelNow / Books / Book
+c. the database table and column names, which are authoritative for code
+
+Then STOP and ask which set of words wins in the UI. Whichever is chosen, the DB stays
+`books` — a UI label change must go through a single label map, never a schema rename.
+
+Once decided, use that vocabulary consistently for every string in this prompt. Below I
+write "book"; substitute if you are told to.
+
+## §2 · STEP 2 — AGGREGATION
+
+§2.1 Extend lib/catalog.ts with pure functions. No React, no I/O, deterministic:
+
+readinessBreakdown(chapters): { ready, textOnly, audioOnly, empty }
+ready = script_text present AND audio_path present
+textOnly = script present, audio missing
+audioOnly = audio present, script missing
+empty = both missing
+The four buckets are mutually exclusive and must sum to the chapter total.
+Assert that in a unit-free runtime check; if it fails, that is a data bug worth
+surfacing rather than hiding.
+
+bookReadiness(book, chapters): the same four counts scoped to one book, plus a
+percentComplete derived from ready / total.
+
+accessMix(chapters): { free, locked }
+
+activityByDay(entries, days): an array of { date, count } covering the last N days
+inclusive, with zero-filled gaps. Zero-filling matters — a missing day must render
+as a zero-height column, not be skipped, or the axis lies.
+
+§2.2 Extend lib/queries.ts:
+
+getReadinessCounts() — one aggregate query, not a full chapter fetch
+getPerBookReadiness() — id, title, and the four counts per book
+getAccessMix()
+getActivityByDay(14) — derived from activity_log.created_at
+
+Select only the columns each aggregate needs. Do NOT pull script_text to test whether
+it is null — use a boolean projection. Pulling 22 chapters of prose to count them is
+the exact mistake prompt 13 was written to avoid.
+
+§2.3 No schema change. No new tables. No new columns. No migration.
+
+§2.4 There is no historical snapshot table, so no chart may claim to show completion
+trending over time. The only honest time series available is event counts from
+activity_log. Do not fabricate a trend, a delta, a "+3 this week", or an arrow.
+
+## §3 · STEP 3 — ROW 1, READINESS STRIP
+
+The hero element. Full container width, one card, directly below the page header.
+
+§3.1 Heading "Production readiness", 16px/600. Sub-line, 12px muted, computed:
+"<ready> of <total> chapters ready to publish."
+
+§3.2 One horizontal stacked bar, full card width, 40px tall, 8px radius, four segments in
+this order: Ready, Text only, Audio only, Empty. Segment widths proportional to
+count. Segments under 4% of the width still render at a 4px minimum so they never
+vanish — a single blocked chapter must remain visible.
+
+§3.3 Colours, from existing tokens only:
+Ready status-ok
+Text only status-warn
+Audio only primary
+Empty border, with muted text
+Never encode meaning by colour alone. Every segment carries a legend entry below the
+bar with a colour chip, the label, and the count: "Ready 2 · Text only 18 ·
+Audio only 0 · Empty 2". Hovering a segment shows a tooltip with the same text.
+
+§3.4 A percentage reads at the right of the heading row, 24px/600: ready / total as a
+whole number. Frame it positively — completion, not deficiency.
+
+## §4 · STEP 4 — ROW 2, METRIC TILES
+
+Keep three tiles, keep the existing tile geometry and 24px gaps. Change what they say.
+
+§4.1 Tile 1 — BOOKS. The count. Sub-line: "<n> published · <n> draft".
+§4.2 Tile 2 — CHAPTERS. The count. Sub-line: "<n> free · <n> locked".
+§4.3 Tile 3 — AUDIO COVERAGE. Replace "MISSING AUDIO". Show "<n>/<n>" in mono at the same
+size as the other tile numbers, with a 4px progress bar beneath at the tile's width.
+Bar fill is status-ok above 80%, status-warn between 20% and 80%, destructive below
+20%. Sub-line: "<n> chapters still need narration."
+
+§4.4 Uppercase 13px/600 muted labels above the numbers, exactly as now. No sparklines in
+tiles, no percentage deltas, no trend arrows (§2.4).
+
+## §5 · STEP 5 — ROW 3, PER-BOOK COMPLETION
+
+§5.1 Card headed "By book", sub-line "Where each story stands."
+
+§5.2 One row per book: cover thumbnail at 24×36, title, then the same four-segment
+stacked bar as §3.2 at 16px tall scoped to that book, then the percentage in mono at
+the right on a fixed axis so the numbers align down the column.
+
+§5.3 Row height 48px. Full row is a link to /books/<id>. Hover uses the existing table
+row hover.
+
+§5.4 Sort by percentComplete ascending — least finished first. That is the work queue
+order and it is the point of the card.
+
+§5.5 Cap at 8 rows with a footer link "View all in Books". Long titles truncate with an
+ellipsis and carry a title attribute; they must never wrap the row to two lines.
+
+## §6 · STEP 6 — ROW 4, TWO HALF-WIDTH CARDS
+
+Side by side, 24px gap, equal width.
+
+§6.1 Left — "Access mix". A single horizontal stacked bar, Free versus Locked, 24px tall,
+with counts and percentages labelled beside it.
+
+     Do NOT use a pie or donut. With two categories a stacked bar is more precise and more
+     information-dense; pie charts only earn their place when a single simple proportion
+     needs selling, and this is not that.
+
+     Beneath it, one muted 12px line: "<n> locked chapters need an ad view or a
+     subscription." Consistent with the existing access helper copy.
+
+§6.2 Right — "Activity". A 14-day column chart from getActivityByDay. Columns in primary
+at 60% opacity, today's column at full opacity. Y axis hidden; the shape is the
+message and a labelled axis on counts this small is chartjunk. X axis labels only the
+first, middle and last day. Tooltip on hover gives the date and the event count.
+
+     Sub-line: "<n> events in the last 14 days."
+
+     This chart measures operator activity, not content completion. Label it so nobody
+     reads it as progress.
+
+## §7 · STEP 7 — ROW 5, NEEDS ATTENTION REBUILT
+
+Keep the table. Fix what is broken in the screenshot.
+
+§7.1 The BOOK column currently renders "as" on every row — either a real book titled "as"
+or a truncation bug. Investigate and report which. If it is truncation, fix it; if
+the title really is "as", leave the data alone.
+
+§7.2 Chapter titles are rendering in full uppercase and overflowing the column. Do not
+transform case in CSS — render the stored title as stored. Truncate at one line with
+an ellipsis and a title attribute. The row must stay 48px regardless of title length.
+
+§7.3 Replace the plain text in WHAT'S MISSING with status pills using the existing pill
+variants: "Script" warn, "Narration" warn, "Script and audio" destructive.
+
+§7.4 Group rows under a small muted book sub-header when more than one book appears, so
+the repeated book name stops consuming a column on every row. Ordered by book, then
+chapter number.
+
+§7.5 Keep the 10-row cap, the "<n> chapters need attention" footer, and the "View all in
+Books" link. Keep row click and Open both navigating to the chapter editor.
+
+## §8 · STEP 8 — ROW 6, RECENT ACTIVITY GROUPED
+
+The current card is 20 rows of near-identical events — "Chapter 01 set free", "Chapter 02
+set locked" — which hides the events that matter.
+
+§8.1 Collapse consecutive entries of the same type within the same book into one row:
+"6 chapters set locked · 22:43". Expand on click to show the individual entries.
+
+§8.2 Group under muted date headers: Today, Yesterday, then the date.
+
+§8.3 Keep the fixed-width mono HH:mm timestamps. Keep plain text messages. No icons, no
+avatars, no author names.
+
+§8.4 Cap at 12 visible groups with a "Show more" affordance. No pagination, no filters.
+
+## §9 · STEP 9 — EMPTY AND EDGE STATES
+
+No books at all Tiles read zero. Readiness strip is replaced by an empty-state
+line plus the New book action — never a zero-width bar or an
+empty axis. By book and Access mix render their empty lines.
+One book Everything renders; By book shows one row. No layout collapse.
+Nothing needs status-ok "Everything is complete." The readiness strip shows
+attention 100% and a single full-width Ready segment.
+No activity "No activity yet." The 14-day chart renders a flat zero
+baseline, not an empty box.
+All chapters empty Readiness strip is entirely the Empty segment, 0%. This must
+look deliberate, not broken.
+Division by zero Any percentage over a zero denominator renders "—", never NaN,
+never 0%.
+Loading Update app/(dashboard)/loading.tsx to mirror the new rows:
+skeleton strip, three tiles, book rows, two half cards, table,
+activity. Zero layout shift on arrival.
+
+## §10 · CONSTRAINTS
+
+1.  Dashboard only — app/(dashboard)/page.tsx, its loading and error files, new
+    components under components/dashboard/, and the §2 additions to lib/.
+2.  Do not touch Books, Book editor, Chapter editor, Settings, Uploads, Bulk import,
+    Clerk auth, any server action, or the mobile app.
+3.  No schema change, no migration, no new columns, no new tables.
+4.  Read-only. This screen performs no mutation.
+5.  Page stays a Server Component and fetches the data. Charts are Client Components
+    receiving fully-computed props — never raw rows, never a fetch in a chart.
+6.  Every colour from the prompt-01 token set: page, card, border, primary, text, muted,
+    sidebar, status-ok, status-warn, destructive. No new hex anywhere, including chart
+    fills. Theme recharts through CSS variables, not literal colours.
+7.  Flat surfaces. Max 1px borders. 8px card radius. 24px inter-card gap. 1040px
+    container. 8px spacing grid. No shadows, no gradients, no glassmorphism.
+8.  No animation beyond the chart library's default mount transition. No counting-up
+    numbers, no parallax, no confetti.
+9.  No gauges, speedometers, radar charts, treemaps, word clouds, or 3D anything.
+10. Exactly one ember button on the screen: New book.
+11. WCAG 2.2 AA contrast. Meaning never carried by colour alone (§3.3).
+12. Strict TypeScript. No any. Chart props typed from the §2 return types.
+13. Desktop only at 1440×1024.
+
+## §11 · VERIFICATION
+
+1.  Load the Dashboard against the current data — 2 books, 22 chapters, 20 missing audio.
+    The readiness strip, the tiles and the By book rows must all agree. If any two
+    disagree, an aggregate is wrong.
+2.  Confirm the four readiness buckets sum exactly to the chapter total.
+3.  Upload narration to one chapter and reload. Every affected number, bar and percentage
+    moves consistently. No stale cache.
+4.  Empty the database. Every card renders its §9 empty state. No NaN, no broken axis, no
+    zero-width bar, no console error.
+5.  Seed one book with 148 chapters. By book stays one 48px row, the readiness strip does
+    not overflow, and the page does not jank.
+6.  Confirm a book with exactly one blocked chapter still shows a visible segment (§3.2).
+7.  Throttle to Slow 3G. The skeleton matches the final layout; nothing shifts.
+8.  Screenshot at 1440×1024 and confirm the container is 1040px, gaps are 24px, and no
+    card overflows.
+9.  Check the rendered DOM for hardcoded hex values in chart fills. There must be none.
+10. Confirm no file under app/actions/ changed and no mutation exists on this screen.
+11. Run npm run lint and npm run typecheck. Fix everything.
+
+## §12 · FLAG, DO NOT DECIDE
+
+1.  The Talebrim / Stories versus NovelNow / Books outcome from §1.
+2.  Whether the BOOK column "as" is real data or truncation (§7.1).
+3.  If recharts was denied, which visuals were degraded and how.
+4.  Any aggregate that required a query you judged too expensive, with the cost.
+
+## §13 · REFERENCE
+
+shadcn/ui Chart, composed on Recharts:
+https://ui.shadcn.com/docs/components/base/chart
+Pie versus bar for part-to-whole:
+https://www.atlassian.com/data/charts/how-to-choose-pie-chart-vs-bar-chart

@@ -74,9 +74,13 @@ function fail(
  * That is cold-connection latency, not an outage. Performance Rules records a
  * measured **1244ms for a single `HEAD`** against this instance — longer than a
  * real `select *`, because connection setup dominates on `t3.nano`.
- * `getDashboardCounts` opens with three `HEAD` counts at once, so the first
+ * `getDashboardCounts` opens the screen with concurrent queries, so the first
  * load after sign-in is the worst case in the whole app. A single retry 250ms
  * later was still inside the same cold window and failed identically.
+ *
+ * (It opened with *three* `HEAD` counts when this was written. It is two small
+ * projections now — see that function — which lowers the worst case but does
+ * not change the reasoning here.)
  *
  * 300ms then 900ms gives ~1.2s of headroom across three attempts, which covers
  * a cold start without making a genuine outage feel sluggish.
@@ -398,40 +402,56 @@ export async function getChapterNeighbours(
 
 export type DashboardCounts = {
   books: number;
+  publishedBooks: number;
   chapters: number;
-  missingAudio: number;
+  freeChapters: number;
+  /** Chapters WITH narration. The tile shows coverage, not the deficit. */
+  audioReady: number;
 };
 
-/** Counted in Postgres — no rows are transferred to compute these tiles. */
+/**
+ * Counted in Postgres — no rows are transferred to compute these tiles.
+ *
+ * Still exactly three round trips, deliberately. This returns five numbers
+ * where it used to return three, and the obvious way to get the two new ones is
+ * two more `HEAD` counts. That would take the Dashboard from three concurrent
+ * cold queries to five on the screen whose cold-start behaviour needed a
+ * backoff retry to stop it flashing an error after sign-in (see `withRetry`
+ * above). Instead, the two extra dimensions are derived client-side from small
+ * projections that replace the counts they extend:
+ *
+ *   - `books` selects `status`, so published/draft is one pass over N rows
+ *     where N is the number of books — tens, not thousands.
+ *   - `chapters` selects `access` and a boolean audio projection, giving total,
+ *     free/locked, and audio coverage from a single scan.
+ *
+ * `audio_path` is projected as a boolean by `not.is.null` rather than selected,
+ * so no storage paths cross the wire — and `script_text` is never mentioned,
+ * which is the mistake prompt 13 exists to prevent.
+ */
 export async function getDashboardCounts(
   client: Client,
 ): Promise<QueryResult<DashboardCounts>> {
-  const [books, chapters, missingAudio] = await Promise.all([
-    withRetry(() =>
-      client.from("books").select("*", { count: "exact", head: true }),
-    ),
-    withRetry(() =>
-      client.from("chapters").select("*", { count: "exact", head: true }),
-    ),
-    withRetry(() =>
-      client
-        .from("chapters")
-        .select("*", { count: "exact", head: true })
-        .is("audio_path", null),
-    ),
+  const [books, chapters] = await Promise.all([
+    withRetry(() => client.from("books").select("status")),
+    withRetry(() => client.from("chapters").select("access, audio_path")),
   ]);
 
   if (books.error) return fail("Could not count books", books.error);
   if (chapters.error) return fail("Could not count chapters", chapters.error);
-  if (missingAudio.error)
-    return fail("Could not count missing audio", missingAudio.error);
+
+  const bookRows = books.data ?? [];
+  const chapterRows = chapters.data ?? [];
 
   return {
     ok: true,
     data: {
-      books: books.count ?? 0,
-      chapters: chapters.count ?? 0,
-      missingAudio: missingAudio.count ?? 0,
+      books: bookRows.length,
+      publishedBooks: bookRows.filter((row) => row.status === "published")
+        .length,
+      chapters: chapterRows.length,
+      freeChapters: chapterRows.filter((row) => row.access === "free").length,
+      audioReady: chapterRows.filter((row) => row.audio_path !== null).length,
     },
   };
 }
