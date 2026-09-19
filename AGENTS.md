@@ -357,6 +357,8 @@ Breadcrumb row sits inside the main area, not in the sidebar.
 
 Sidebar order is fixed: **Dashboard, Stories, Settings**. (Uploads was removed from the sidebar — see A6/A7 below.)
 
+**The sidebar header is the mark plus the wordmark (2026-09-19).** A 24px logo sits before the `Talebrim` text, 8px gap. Two details are load-bearing and easy to undo by accident: the image takes `alt=""` because the wordmark beside it already reads the name — a real alt makes a screen reader announce "Talebrim" twice — and it takes `rounded-[5px]` because the artwork is drawn on its own dark tile with rounded corners, so a square image against the sidebar shows a visible corner mismatch. The same artwork is the favicon (`app/favicon.ico`, four resolutions at 16/32/48/64).
+
 ---
 
 ## Screen Inventory
@@ -656,15 +658,12 @@ Before using any image asset:
 3. Import and export all app images from `constants/images.ts`.
 4. Use images through the centralized object.
 
-Example:
+**The file holds public paths, not static imports.** An earlier revision of this section showed `import coverPlaceholder from "@/public/images/..."`, which is not what the codebase does and does not work from `public/` in this setup. As implemented:
 
 ```ts
-import coverPlaceholder from "@/public/images/cover-placeholder.png";
-import emptyBooks from "@/public/images/empty-books.svg";
-
 export const images = {
-  coverPlaceholder,
-  emptyBooks,
+  coverPlaceholder: "/images/cover-placeholder.svg",
+  logo: "/images/talebrim-logo.png",
 };
 ```
 
@@ -675,6 +674,8 @@ Use images like this:
 ```
 
 Do not import image assets directly inside pages or components unless there is a strong reason.
+
+**Ship a sized asset, not the source file.** The Talebrim mark arrived as a 2795×2552 PNG (~195KB) and is served as a 256px square (~20KB) — crisp at 2× on the 24px the sidebar renders it, rather than sending a 195KB file to draw a 24px square. The favicon is generated **from that same artwork** rather than exported separately, so the tab icon and the sidebar cannot drift apart.
 
 Cover thumbnails come from Supabase Storage / CDN URLs stored in the database. Render them with `next/image`, always with explicit width and height and a 2:3 aspect ratio. Configure the Supabase CDN hostname in `next.config.ts` rather than disabling optimization.
 
