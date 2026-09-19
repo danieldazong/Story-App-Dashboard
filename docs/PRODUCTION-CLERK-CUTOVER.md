@@ -218,3 +218,57 @@ Keep it; local development uses it.
 To roll back: put the `pk_test_` / `sk_test_` values back in Vercel's Production
 scope and redeploy. The DNS records and the Supabase issuer registration are
 additive and harmless if left in place.
+
+
+---
+
+## Google sign-in on a production instance (2026-09-19)
+
+The production instance was created as a **default** instance, so it carried no
+SSO connections. Adding Google is not the one-click toggle it is in
+development: Clerk's own page says **"You must provide your own credentials on
+production instances."** Clerk's shared OAuth app is development-only. That is
+why `localhost` shows a Google button and `talebrim.com` does not until this is
+done — both are behaving correctly.
+
+What it takes, all free and needing no Google Cloud billing account:
+
+1. **Google Cloud Console** → create project `Talebrim`. Ignore the $300 trial
+   prompt; OAuth credentials cost nothing.
+2. **Google Auth Platform** (the rebranded OAuth consent screen) → App
+   Information, Audience **External**, Contact Information → Create. Add no
+   scopes: Clerk already supplies `openid`, `userinfo.email` and
+   `userinfo.profile`.
+3. **Clients → Create client** → *Web application*, and one **Authorized
+   redirect URI**, copied from Clerk's Google page:
+   `https://clerk.talebrim.com/v1/oauth_callback`. Leave **Authorized
+   JavaScript origins empty** — Clerk redirects server-side. A mismatch here
+   surfaces as `redirect_uri_mismatch` at sign-in and nothing else explains it.
+4. Paste the **Client ID** and **Client Secret** into Clerk → SSO connections →
+   Google OAuth → *Use custom credentials*, toggle **Enable for sign-up and
+   sign-in**, then **Enable connection**.
+
+**The client secret is shown once.** Google's dialog says so plainly: close it
+without copying and the only remedy is a new client. `Download JSON` is the
+safe option.
+
+**A new OAuth app starts in Testing mode**, where only email addresses listed
+under *Audience → Test users* can sign in — everyone else gets "access
+blocked", which reads as a broken integration rather than a setting. **Publish
+the app** (Audience → Publish app). Verification is not required at these
+scopes.
+
+Google warns that changes take **5 minutes to a few hours** to propagate. An
+immediate failure right after setup is not evidence of a misconfiguration.
+
+Google sign-in grants no authority on its own: a user arriving this way still
+needs `role: admin` in `publicMetadata`, or `requireAdmin()` sends them to
+`/not-authorised` (Deferred Security Task 5).
+
+> **The Google client secret was also exposed in a screenshot on 2026-09-19**,
+> the third credential today. Lower severity than the Clerk keys — it only
+> permits Google sign-in for this app and is useless without a matching
+> redirect URI — but it should still be rotated once sign-in is confirmed
+> working: Google Cloud → Clients → the client → **Add secret**, paste the new
+> one into Clerk, then delete the old. Same new-first ordering as every other
+> rotation here.
