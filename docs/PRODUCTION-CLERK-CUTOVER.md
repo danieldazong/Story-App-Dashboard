@@ -272,3 +272,72 @@ needs `role: admin` in `publicMetadata`, or `requireAdmin()` sends them to
 > working: Google Cloud → Clients → the client → **Add secret**, paste the new
 > one into Clerk, then delete the old. Same new-first ordering as every other
 > rotation here.
+
+
+---
+
+## Rolled back on 2026-09-19, cause unresolved
+
+The cutover completed and was verified — sign-in worked, the Dashboard rendered
+real counts, the "Development mode" badge was gone. **Then the sign-in card
+stopped rendering**: `talebrim.com/sign-in` returned 200 with the "Talebrim"
+wordmark and nothing else. No console error, no failed request, reproducible in
+a **Guest profile** (so not an extension) and in a second browser.
+
+Rolled back by putting the `pk_test_` / `sk_test_` values back in Vercel and
+redeploying — about three minutes, and the card returned immediately. The
+production instance keeps everything configured: DNS, certificates, the
+Supabase issuer registration, the session-token claim, the Supabase
+integration, Google OAuth. Retrying is swapping those two variables back.
+
+**The cost of the rollback** is the four symptoms returning — invitation emails
+in spam, `[Development]` subjects, the dev-mode badge. Everything works; none
+of it is production-grade.
+
+### What was ruled out, with evidence
+
+| Suspect | Disproof |
+|---|---|
+| Google Cloud / OAuth | The whole card failed, email field included; Google only matters after clicking its button |
+| Browser extensions | Blank in a Guest profile, which loads none |
+| Stale cookies | Blank in a fresh profile and a second browser |
+| Clerk JS unreachable | 200, valid JS, `Content-Type: application/javascript`, CORS `*` |
+| App JS chunks | All 200 |
+| The sign-in page code | Unchanged, and the `<span>` above `<SignIn />` renders |
+| Wrong key deployed | Correct `pk_live_` present in the bundle |
+| Stale build | `X-Vercel-Cache: MISS`, `Age: 0`, correct `X-Matched-Path` |
+| **Bot protection / Turnstile CAPTCHA** | **Disabled it; no change. And the DEV instance has `captcha_widget: smart` too and renders fine — so it was never a plausible cause.** |
+
+### The mistake worth recording
+
+Three theories were chased — stale cookies, extensions, then CAPTCHA — each
+costing a round trip, before any browser-side evidence was gathered. **The
+CAPTCHA disproof was available the entire time**: one query against the dev
+instance's `/v1/environment` shows it runs the same Smart CAPTCHA and renders
+correctly. That check was run only *after* the setting had been turned off.
+
+This is the same failure this file's Debugging Playbooks already describe —
+*"get the real stack before theorising"*, and the three wrong fixes shipped by
+reasoning from the collapsed stack. Diagnosing a browser-side failure from
+`curl` is the same error in a different costume: everything reachable from
+outside was healthy, which proved only that the problem was somewhere `curl`
+cannot see.
+
+### Start here next time
+
+On the blank page, in the browser console:
+
+```js
+console.log({ clerk: !!window.Clerk, status: window.Clerk?.status, loaded: window.Clerk?.loaded })
+```
+
+- `clerk: false` → the script never executed (and it is not the network — the
+  file serves 200 valid JS)
+- `clerk: true, loaded: false` → Clerk loaded, handshake never completed
+- `clerk: true, loaded: true` → Clerk is fine and `<SignIn />` itself failed to
+  mount, which is a different problem entirely
+
+Then **Network tab, filter `clerk`**, and read the status of
+`clerk.browser.js`, `/v1/environment` and `/v1/client`.
+
+Do not re-test bot protection. It is disproven above.
