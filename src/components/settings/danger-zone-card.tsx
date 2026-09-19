@@ -44,7 +44,7 @@ export function DangerZoneCard() {
       }
       const { booksDeleted, filesDeleted } = result.data;
       toast.success(
-        `Deleted ${booksDeleted} ${booksDeleted === 1 ? "book" : "books"} and ${filesDeleted} ${filesDeleted === 1 ? "file" : "files"}.`,
+        `Deleted ${booksDeleted} ${booksDeleted === 1 ? "story" : "stories"} and ${filesDeleted} ${filesDeleted === 1 ? "file" : "files"}.`,
       );
       handleOpenChange(false);
     });
@@ -60,7 +60,7 @@ export function DangerZoneCard() {
         <div className="flex flex-col gap-1">
           <p className="text-body text-text">Delete all seed data</p>
           <p className="card__sub-line">
-            Removes test books, chapters and uploaded files. Cannot be undone.
+            Removes test stories, chapters and uploaded files. Cannot be undone.
           </p>
         </div>
         <Button
@@ -78,7 +78,7 @@ export function DangerZoneCard() {
           <DialogHeader>
             <DialogTitle>Delete all seed data?</DialogTitle>
             <DialogDescription>
-              This removes every test book, chapter and uploaded file. It cannot
+              This removes every test story, chapter and uploaded file. It cannot
               be undone.
             </DialogDescription>
           </DialogHeader>

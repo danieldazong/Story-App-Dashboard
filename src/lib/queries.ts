@@ -251,7 +251,7 @@ export async function getBooks(
     client.from("books").select("*").order("title"),
   );
 
-  if (booksError) return fail("Could not load books", booksError);
+  if (booksError) return fail("Could not load stories", booksError);
 
   const { data: chapters, error: chaptersError } = await withRetry(() =>
     client.from("chapters").select("book_id, script_text, audio_path"),
@@ -293,7 +293,7 @@ export async function getBook(
     client.from("books").select("*").eq("id", bookId).maybeSingle(),
   );
 
-  if (error) return fail("Could not load this book", error);
+  if (error) return fail("Could not load this story", error);
   return { ok: true, data: data ? toBook(data, cdnDomain) : null };
 }
 
@@ -437,7 +437,7 @@ export async function getDashboardCounts(
     withRetry(() => client.from("chapters").select("access, audio_path")),
   ]);
 
-  if (books.error) return fail("Could not count books", books.error);
+  if (books.error) return fail("Could not count stories", books.error);
   if (chapters.error) return fail("Could not count chapters", chapters.error);
 
   const bookRows = books.data ?? [];
@@ -545,7 +545,7 @@ export async function getBooksForImport(
     .select("id, title")
     .order("title");
 
-  if (booksError) return fail("Could not load books", booksError);
+  if (booksError) return fail("Could not load stories", booksError);
 
   const { data: chapters, error: chaptersError } = await client
     .from("chapters")

@@ -21,7 +21,7 @@ export default function ChapterError({
       retry={retry}
       breadcrumbs={[{ label: "Stories", href: "/books" }, { label: "Error" }]}
       parentHref={backHref}
-      parentLabel={params?.bookId ? "this book" : "books"}
+      parentLabel={params?.bookId ? "this story" : "stories"}
       context="this chapter"
     />
   );

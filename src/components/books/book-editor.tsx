@@ -147,7 +147,7 @@ export function BookEditor({
       return;
     }
 
-    toast.success("Book saved");
+    toast.success("Story saved");
 
     // Move the dirty baseline to what was just saved, so Save disables again.
     //

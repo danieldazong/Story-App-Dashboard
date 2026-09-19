@@ -37,7 +37,7 @@ export default function DashboardError({
       retry={retry}
       breadcrumbs={[{ label: "Dashboard" }]}
       parentHref="/books"
-      parentLabel="books"
+      parentLabel="stories"
       context="this screen"
     />
   );

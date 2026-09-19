@@ -18,8 +18,8 @@ export default function BookError({
       retry={retry}
       breadcrumbs={[{ label: "Stories", href: "/books" }, { label: "Error" }]}
       parentHref="/books"
-      parentLabel="books"
-      context="this book"
+      parentLabel="stories"
+      context="this story"
     />
   );
 }

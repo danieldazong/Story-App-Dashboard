@@ -124,7 +124,7 @@ export async function preflightBulkImport(input: {
 
   if (bookRead.error) return actionError(describeDbError(bookRead.error));
   if (!bookRead.data) {
-    return actionError("That book no longer exists, or you can't access it.");
+    return actionError("That story no longer exists, or you can't access it.");
   }
   if (chapterRead.error) return actionError(describeDbError(chapterRead.error));
   if (!settings.ok) return actionError(settings.error);
@@ -249,7 +249,7 @@ export async function createImportTarget(
     ]);
 
     if (bookRead.error) return actionError(describeDbError(bookRead.error));
-    if (!bookRead.data) return actionError("That book no longer exists.");
+    if (!bookRead.data) return actionError("That story no longer exists.");
 
     const freeAtStart = settings.ok ? settings.data.freeChaptersAtStart : 0;
     const access =

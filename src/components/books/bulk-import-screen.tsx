@@ -437,7 +437,7 @@ export function BulkImportScreen({
       // were true when they dropped the files, and are not any more.
       setPhase("collecting");
       setNotice(
-        "The book changed since you dropped these files. Review the updated statuses before importing.",
+        "The story changed since you dropped these files. Review the updated statuses before importing.",
       );
       return;
     }
@@ -478,7 +478,7 @@ export function BulkImportScreen({
         action={
           phase === "settled" ? (
             <Button asChild>
-              <Link href={`/books/${bookId}`}>Open book</Link>
+              <Link href={`/books/${bookId}`}>Open story</Link>
             </Button>
           ) : (
             <Button
@@ -748,7 +748,7 @@ export function BulkImportScreen({
                   </Button>
                 )}
                 <Button asChild size="sm">
-                  <Link href={`/books/${bookId}`}>Open book</Link>
+                  <Link href={`/books/${bookId}`}>Open story</Link>
                 </Button>
               </div>
             )}

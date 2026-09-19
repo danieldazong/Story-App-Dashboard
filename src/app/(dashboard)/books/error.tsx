@@ -16,7 +16,7 @@ export default function BooksError({
       breadcrumbs={[{ label: "Stories" }]}
       parentHref="/"
       parentLabel="Dashboard"
-      context="your books"
+      context="your stories"
     />
   );
 }

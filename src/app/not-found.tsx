@@ -22,7 +22,7 @@ export default function NotFound() {
             <Link href="/">Go to Dashboard</Link>
           </Button>
           <Button asChild variant="muted">
-            <Link href="/books">Browse books</Link>
+            <Link href="/books">Browse stories</Link>
           </Button>
         </div>
       </div>

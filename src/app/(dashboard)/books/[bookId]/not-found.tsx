@@ -21,13 +21,13 @@ export default function BookNotFound() {
         items={[{ label: "Stories", href: "/books" }, { label: "Not found" }]}
       />
       <div className="card flex flex-col gap-3 p-6">
-        <h1 className="text-page-title">Book not found</h1>
+        <h1 className="text-page-title">Story not found</h1>
         <p className="card__sub-line">
-          This book doesn&apos;t exist or may have been removed.
+          This story doesn&apos;t exist or may have been removed.
         </p>
         <div>
           <Button asChild variant="outline">
-            <Link href="/books">Back to books</Link>
+            <Link href="/books">Back to stories</Link>
           </Button>
         </div>
       </div>

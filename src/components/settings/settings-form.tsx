@@ -412,7 +412,7 @@ function PublishingDefaultsCard() {
         render={({ field }) => (
           <FormItem className="field-group">
             <FormLabel className="field-group__label">
-              Free chapters at start of book
+              Free chapters at start of story
             </FormLabel>
             <FormControl>
               <Input

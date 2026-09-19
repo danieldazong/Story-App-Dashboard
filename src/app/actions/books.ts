@@ -65,7 +65,7 @@ export async function createBook(
 
   if (error) return actionError(describeDbError(error));
 
-  await logActivity(client, actorId, `${values.title} — book created`, {
+  await logActivity(client, actorId, `${values.title} — story created`, {
     bookId: data.id,
   });
 
@@ -113,11 +113,11 @@ export async function updateBook(
   // success.
   if (!data) {
     return actionError(
-      "That book couldn't be updated — it may have been removed, or your account lacks permission.",
+      "That story couldn't be updated — it may have been removed, or your account lacks permission.",
     );
   }
 
-  await logActivity(client, actorId, `${values.title} — book updated`, {
+  await logActivity(client, actorId, `${values.title} — story updated`, {
     bookId,
   });
 
@@ -172,7 +172,7 @@ export async function deleteBook(bookId: string): Promise<ActionResult> {
   if (error) return actionError(describeDbError(error));
   if (!count) {
     return actionError(
-      "That book couldn't be deleted — it may already be gone, or your account lacks permission.",
+      "That story couldn't be deleted — it may already be gone, or your account lacks permission.",
     );
   }
 
@@ -223,7 +223,7 @@ export async function deleteBook(bookId: string): Promise<ActionResult> {
   await logActivity(
     client,
     actorId,
-    `${book?.title ?? "Book"} — book deleted`,
+    `${book?.title ?? "Story"} — story deleted`,
   );
 
   revalidatePath("/books");

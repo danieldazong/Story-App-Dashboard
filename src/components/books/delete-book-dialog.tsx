@@ -65,7 +65,7 @@ export function DeleteBookDialog({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Delete this book?</DialogTitle>
+          <DialogTitle>Delete this story?</DialogTitle>
           <DialogDescription>
             {bookTitle} and all {chapterCount}{" "}
             {chapterCount === 1 ? "chapter" : "chapters"} in it will be deleted,
@@ -75,7 +75,7 @@ export function DeleteBookDialog({
 
         <div className="field-group">
           <Label htmlFor="delete-book-confirm">
-            Type the book title to confirm
+            Type the story title to confirm
           </Label>
           <Input
             id="delete-book-confirm"
@@ -105,7 +105,7 @@ export function DeleteBookDialog({
             disabled={!canConfirm}
             onClick={handleDelete}
           >
-            {pending ? "Deleting…" : "Delete book"}
+            {pending ? "Deleting…" : "Delete story"}
           </Button>
         </DialogFooter>
       </DialogContent>

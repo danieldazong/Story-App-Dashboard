@@ -147,7 +147,7 @@ export function BookDetailsForm({
 
   return (
     <div className="card flex flex-col gap-6 p-6">
-      <h2 className="card__header-title">Book details</h2>
+      <h2 className="card__header-title">Story details</h2>
 
       {formError && (
         <p className="field-group__helper field-group__helper--error">

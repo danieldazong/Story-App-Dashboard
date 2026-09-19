@@ -176,18 +176,18 @@ export function BooksTable({ rows }: { rows: BookListRow[] }) {
         <Input
           value={search}
           onChange={(event) => setSearch(event.target.value)}
-          placeholder="Search books by title..."
+          placeholder="Search stories by title..."
           className="pl-9"
-          aria-label="Search books by title"
+          aria-label="Search stories by title"
         />
       </div>
 
       <div className="card">
         {rows.length === 0 ? (
           <div className="flex flex-col gap-3 p-6">
-            <p className="text-body text-text">No books yet</p>
+            <p className="text-body text-text">No stories yet</p>
             <p className="card__sub-line">
-              Create a book to start tracking scripts and narration audio.
+              Create a story to start tracking scripts and narration audio.
             </p>
             <div>
               <Button asChild variant="outline">
@@ -198,10 +198,10 @@ export function BooksTable({ rows }: { rows: BookListRow[] }) {
         ) : visibleRows.length === 0 ? (
           <div className="flex flex-col gap-3 p-6">
             <p className="text-body text-text">
-              No books match &quot;{search}&quot;
+              No stories match &quot;{search}&quot;
             </p>
             <p className="card__sub-line">
-              Try a different title, or clear the search to see every book.
+              Try a different title, or clear the search to see every story.
             </p>
             <div>
               <Button variant="muted" size="sm" onClick={() => setSearch("")}>
@@ -249,7 +249,7 @@ export function BooksTable({ rows }: { rows: BookListRow[] }) {
       </div>
 
       <p className="text-helper text-muted">
-        {rows.length} {rows.length === 1 ? "book" : "books"}
+        {rows.length} {rows.length === 1 ? "story" : "stories"}
       </p>
 
       {pendingDelete && (

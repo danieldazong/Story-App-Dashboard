@@ -89,7 +89,7 @@ export async function createCoverUploadUrl(input: {
 
   if (bookCheck.error) return actionError(describeDbError(bookCheck.error));
   if (!bookCheck.data) {
-    return actionError("That book no longer exists.");
+    return actionError("That story no longer exists.");
   }
 
   if (signed.error) {
@@ -144,7 +144,7 @@ export async function setBookCover(
   if (error) return actionError(describeDbError(error));
   if (!data) {
     return actionError(
-      "The cover couldn't be saved — the book may have been removed, or your account lacks permission.",
+      "The cover couldn't be saved — the story may have been removed, or your account lacks permission.",
     );
   }
 
@@ -178,7 +178,7 @@ export async function removeBookCover(
   const actorId = await requireAdmin();
 
   if (!z.string().uuid().safeParse(bookId).success) {
-    return actionError("Missing book id.");
+    return actionError("Missing story id.");
   }
 
   const client = await serverSupabase();
@@ -205,7 +205,7 @@ export async function removeBookCover(
   if (error) return actionError(describeDbError(error));
   if (!data) {
     return actionError(
-      "The cover couldn't be removed — the book may have been removed, or your account lacks permission.",
+      "The cover couldn't be removed — the story may have been removed, or your account lacks permission.",
     );
   }
 

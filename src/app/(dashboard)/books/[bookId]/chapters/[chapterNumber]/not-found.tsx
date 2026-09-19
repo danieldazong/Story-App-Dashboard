@@ -30,7 +30,7 @@ export default function ChapterNotFound() {
         <div>
           <Button asChild variant="outline">
             <Link href={backHref}>
-              {params?.bookId ? "Back to book" : "Back to books"}
+              {params?.bookId ? "Back to story" : "Back to stories"}
             </Link>
           </Button>
         </div>

@@ -47,7 +47,7 @@ export function RouteErrorCard({
   breadcrumbs: BreadcrumbItem[];
   parentHref: string;
   parentLabel: string;
-  /** Names what failed to load, e.g. "this book". */
+  /** Names what failed to load, e.g. "this story". */
   context: string;
 }) {
   useEffect(() => {
