@@ -76,6 +76,13 @@ export type Database = {
             foreignKeyName: "activity_log_book_id_fkey"
             columns: ["book_id"]
             isOneToOne: false
+            referencedRelation: "books_catalog"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "activity_log_book_id_fkey"
+            columns: ["book_id"]
+            isOneToOne: false
             referencedRelation: "chapters_needing_attention"
             referencedColumns: ["book_id"]
           },
@@ -84,6 +91,13 @@ export type Database = {
             columns: ["chapter_id"]
             isOneToOne: false
             referencedRelation: "chapters"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "activity_log_chapter_id_fkey"
+            columns: ["chapter_id"]
+            isOneToOne: false
+            referencedRelation: "chapters_catalog"
             referencedColumns: ["id"]
           },
           {
@@ -277,6 +291,13 @@ export type Database = {
             foreignKeyName: "chapters_book_id_fkey"
             columns: ["book_id"]
             isOneToOne: false
+            referencedRelation: "books_catalog"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chapters_book_id_fkey"
+            columns: ["book_id"]
+            isOneToOne: false
             referencedRelation: "chapters_needing_attention"
             referencedColumns: ["book_id"]
           },
@@ -284,6 +305,70 @@ export type Database = {
       }
     }
     Views: {
+      books_catalog: {
+        Row: {
+          audio_count: number | null
+          author: string | null
+          chapter_count: number | null
+          cover_height: number | null
+          cover_path: string | null
+          cover_width: number | null
+          created_at: string | null
+          default_chapter_access:
+            | Database["public"]["Enums"]["chapter_access"]
+            | null
+          free_chapter_count: number | null
+          genres: string[] | null
+          id: string | null
+          maturity: Database["public"]["Enums"]["maturity"] | null
+          short_description: string | null
+          synopsis: string | null
+          title: string | null
+          total_duration_seconds: number | null
+          updated_at: string | null
+        }
+        Relationships: []
+      }
+      chapters_catalog: {
+        Row: {
+          access: Database["public"]["Enums"]["chapter_access"] | null
+          audio_duration_seconds: number | null
+          audio_duration_source:
+            | Database["public"]["Enums"]["duration_source"]
+            | null
+          book_id: string | null
+          created_at: string | null
+          has_audio: boolean | null
+          has_text: boolean | null
+          id: string | null
+          number: number | null
+          title: string | null
+          updated_at: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chapters_book_id_fkey"
+            columns: ["book_id"]
+            isOneToOne: false
+            referencedRelation: "books"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chapters_book_id_fkey"
+            columns: ["book_id"]
+            isOneToOne: false
+            referencedRelation: "books_catalog"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chapters_book_id_fkey"
+            columns: ["book_id"]
+            isOneToOne: false
+            referencedRelation: "chapters_needing_attention"
+            referencedColumns: ["book_id"]
+          },
+        ]
+      }
       chapters_list: {
         Row: {
           access: Database["public"]["Enums"]["chapter_access"] | null
@@ -351,6 +436,13 @@ export type Database = {
             columns: ["book_id"]
             isOneToOne: false
             referencedRelation: "books"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chapters_book_id_fkey"
+            columns: ["book_id"]
+            isOneToOne: false
+            referencedRelation: "books_catalog"
             referencedColumns: ["id"]
           },
           {
