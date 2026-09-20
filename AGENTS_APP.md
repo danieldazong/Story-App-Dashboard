@@ -36,11 +36,17 @@ policy's `to authenticated` matches. The operator role is the **nested**
 every policy denies everything. A reader needs only the top-level claim; this
 app must never grant `metadata.role`.
 
-**5 · Point at the same Clerk instance the dashboard is using.** It is on the
-**development** instance right now (the production cutover was rolled back on
-2026-09-19, cause unresolved). Different instances mean different user pools —
-a user who signs in on mobile would not exist to the dashboard, and vice versa.
-Check before assuming production.
+**5 · One Clerk application, shared with the dashboard — and the same
+instance.** The mobile client is a **Native application** inside the existing
+`Talebrim` app, never a second Clerk application: two apps mint two `sub`
+namespaces, so the same human becomes two unrelated accounts and no per-user
+table can ever be joined across them. Reader-versus-admin is decided by
+`metadata.role`, not by which app someone signed into (see Identity model).
+
+The **instance** matters too: the dashboard is on **development** right now
+(the production cutover was rolled back on 2026-09-19, cause unresolved).
+Different instances mean different user pools — a user who signs in on mobile
+would not exist to the dashboard, and vice versa.
 
 > **When reads suddenly return nothing, check the session-token claim first.**
 > Both Clerk instances are configured with
@@ -621,6 +627,163 @@ Identify the caller with `auth.jwt() ->> 'sub'` (the Clerk user ID, stored as `t
 
 ---
 
+## Identity model — ONE Clerk application, role decides access
+
+**Decided 2026-09-20. Do not create a second Clerk application for the mobile
+app.** The question was asked and answered; this section exists so it is not
+re-litigated.
+
+```
+Talebrim  (one Clerk application)
+├── Web application     → admin dashboard   → metadata.role = "admin"
+└── Native application  → mobile reader     → no role (authenticated only)
+```
+
+Both surfaces share one user pool, one issuer, and one session-token claim.
+
+### Why not a separate app for readers
+
+The instinct is reasonable — different audiences, different products. It does
+not work against this database:
+
+**Supabase identifies every caller by `auth.jwt() ->> 'sub'`**, and validates
+tokens against registered issuers. Two Clerk applications mint **two different
+`sub` namespaces**. The consequences are permanent and hard to undo:
+
+- `reading_positions.user_id` would hold ids from one app while
+  `activity_log.actor_id` holds ids from the other. They could never be joined
+  or compared.
+- The same human signing into both surfaces would be two unrelated accounts.
+- "Which readers are stuck on chapter 3", or an admin inspecting a reader's
+  library, become impossible rather than merely unbuilt.
+
+**The separation you want already exists, and it is not app-level.** It is
+`metadata.role`:
+
+| | Token carries | Result |
+|---|---|---|
+| Reader | top-level `role: "authenticated"`, no `metadata.role` | passes RLS as a reader, `is_admin()` false |
+| Admin | both, with `metadata.role: "admin"` | `is_admin()` true, dashboard access |
+
+That guard is verified in production: on 2026-09-19 an uninvited account signed
+up through the live site and landed on `Not authorised`. One pool, two levels,
+enforced in RLS rather than by which app someone signed into.
+
+**"But there is only one admin" argues the other way.** One Clerk app means one
+operator plus N readers in a single pool — ordinary. Two apps means two sets of
+SSO credentials, **two session-token claims** (miss one and every policy denies
+everything), two instances to keep in step, and two places to debug when auth
+breaks.
+
+### When a second app WOULD be defensible
+
+Recorded so this is a judgement rather than a rule: if readers later need a
+different MFA posture, a different consumer plan, or you positively want **no**
+identity crossover between operators and readers. None of that applies now, and
+splitting later is far easier than merging later.
+
+### How to set it up
+
+**Clerk → Talebrim → Configure → Native applications → add one for Expo.**
+
+That yields a publishable key and redirect handling for the native client,
+**inside** the existing application. Supabase needs no change — same issuer,
+already registered.
+
+⚠️ Point it at the **development** instance. The dashboard is on development
+after the 2026-09-19 production rollback (rule 5, and `AGENTS.md` Deferred
+Security Task 3). Two halves of one product on different instances means
+different user pools, which is the exact failure this section exists to
+prevent.
+
+---
+
+## Build order — what to build, and what is blocked
+
+**Do not start with the Reader and the Player.** They are the interesting
+screens and they are the blocked ones: both depend on tables that do not exist
+and on a storage decision that has not been made. Discovery is unblocked, and
+it teaches the data layer cheaply.
+
+### Phase 0 — two decisions, before any code
+
+**1 · Confirm the Clerk instance.** Development, to match the dashboard.
+Settle it first or you debug two unknowns at once.
+
+**2 · Decide the audio bucket.** This shapes M6 and the entire download
+feature, so it cannot be deferred past Phase 2.
+
+| | Private (today) | Public |
+|---|---|---|
+| URL | signed, expiring | immutable, CDN-cached |
+| Before playback | a round trip to mint one | none |
+| Offline download | signature outlives nothing — needs its own scheme | works directly |
+| Egress cost | ~$0.09/GB uncached | ~$0.03/GB cached |
+
+`AGENTS.md` already states that `locked` is a paywall state **the app enforces
+through entitlements, not a row-level secret** — so making `audio` public is
+consistent with the existing security model rather than a weakening of it. It
+is still a product decision and it is **not yet made**.
+
+### Phase 1 — build against what exists (unblocked today)
+
+**M1** sign-in · **M3** Discover · **M4** Story Detail · **M8** Search
+
+These run against `books_catalog` and `chapters_catalog` now. Expect a real app
+against real data quickly, and expect to learn what the schema actually needs —
+which is the point of doing this before Phase 2.
+
+`M2` (genre picker) is unblocked too, but persists to AsyncStorage only until
+a profile table exists.
+
+### Phase 2 — the three missing tables
+
+Write these **informed by Phase 1**, not before it. Four product questions have
+to be answered first:
+
+1. Does a rewarded-ad unlock **expire**, or is it permanent?
+2. Is a reading position **per account** or **per device**?
+3. Does `My List` (M7) store **order**, or is it sorted by recency?
+4. Does an unlock belong to the **user**, or to the **user + chapter** pair
+   with a count (e.g. re-watchable)?
+
+Then: `reading_positions`, `unlocks`, `library_items`.
+
+**Every migration follows the discipline already proven here on 2026-09-20:**
+
+- **Additive only.** No `alter` on `books`, `chapters`, `app_settings` or
+  `activity_log`. Those belong to a dashboard running in production.
+- RLS on from the start, scoped to `auth.jwt() ->> 'sub'`, so a reader can
+  touch only their own rows.
+- `supabase db push`, then **regenerate types and diff them** — the proof a
+  migration is additive is that the diff shows *only additions*.
+- Re-run the dashboard's three gates: `typecheck`, `lint`, `build`.
+- Re-run the RLS impersonation test as a non-admin **and** as an admin, so
+  both audiences are proven rather than assumed.
+
+### Phase 3 — the blocked screens, now unblocked
+
+**M5** Reader · **M6** Now Playing · **M7** Library · **M9** Chapter List ·
+**M5a** paywall · **M10**/**M11** subscription and profile.
+
+Read/listen parity becomes implementable at this point and not before: steps
+2–4 of its algorithm write to `reading_positions`.
+
+### Before production — two things to plan for now
+
+**The instance is `t3.nano`.** `AGENTS.md` measures a **~450ms floor for a
+trivial query** and concludes that **instance size outranks every code-level
+fix**. No schema work makes this feel like a modern app. Budget the upgrade,
+and lean on TanStack Query's persisted cache so a warm screen never waits on
+the network.
+
+**Seed more content.** One published story, 13 chapters, one with audio. A
+Discover carousel, a 100-row virtualised chapter list and a search results
+screen cannot be evaluated against that. Load it through the admin dashboard —
+that path exists and exercising it is the point.
+
+---
+
 ## Connecting — project, keys and instances
 
 > Verified against the live project on 2026-09-20. **This app connects to the
@@ -865,6 +1028,10 @@ network.
 
 Use Clerk for authentication. Do not build custom auth.
 
+**One application, shared with the admin dashboard** — see Identity model. The
+mobile client is a **Native application** inside Talebrim, not a second Clerk
+app. Do not create one.
+
 - Publishable key only in the app. Secret keys never ship to the client.
 - Token retrieval always goes through Clerk's `getToken`. Never cache a token in a module-level variable or in AsyncStorage.
 - Sign-out clears persisted Zustand state and any user-scoped TanStack Query cache.
@@ -995,5 +1162,6 @@ is the section most likely to be re-read on its own:
    that already do.
 4. A Clerk token's **top-level `role`** (`authenticated`) is not its nested
    **`metadata.role`** (operator). Never grant the second from this app.
-5. Use the **same Clerk instance as the dashboard** — currently the
-   development one.
+5. **One Clerk application**, shared with the dashboard — the mobile client
+   is a Native application inside `Talebrim`, never a second Clerk app — and
+   the **same instance**, currently development.
