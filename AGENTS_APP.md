@@ -578,6 +578,104 @@ Identify the caller with `auth.jwt() ->> 'sub'` (the Clerk user ID, stored as `t
 
 ---
 
+## Connecting — project, keys and instances
+
+> Verified against the live project on 2026-09-20. **This app connects to the
+> same Supabase project and the same Clerk application as the admin dashboard.**
+> There is no separate mobile backend: the dashboard writes the catalog, this
+> app reads it.
+
+### Supabase
+
+| | |
+|---|---|
+| Project name | `story-app-dashboad` (the typo is in the real project name — do not "correct" it) |
+| Project ref | `fwjrdzzdtshbqrfkgivd` |
+| Region | `us-east-1` |
+| Instance | `t3.nano` — see the performance ceiling below |
+| API URL | `https://fwjrdzzdtshbqrfkgivd.supabase.co` |
+
+```bash
+# .env — the anon key is designed to ship in a client; RLS is what protects data.
+EXPO_PUBLIC_SUPABASE_URL=https://fwjrdzzdtshbqrfkgivd.supabase.co
+EXPO_PUBLIC_SUPABASE_ANON_KEY=<anon key from Supabase → Settings → API>
+```
+
+**Never put `SUPABASE_SERVICE_ROLE_KEY` in this app**, in any form, including
+behind a feature flag or in a build-time constant. It bypasses every policy in
+this document. Anything needing it runs in an Edge Function.
+
+This project uses the newer **`sb_publishable_…` / `sb_secret_…`** key format
+rather than the legacy JWT-shaped keys. That matters in one recorded place: the
+resumable-upload endpoint rejects them at parse, so a Node script written
+against the old format will fail confusingly (AGENTS.md, prompt 16). The
+mobile app does not upload, so it is unaffected — noted only so the format is
+not mistaken for a misconfiguration.
+
+### Clerk
+
+Two instances exist, and **both are registered as Supabase Third-Party Auth
+issuers**, so a token from either is accepted by RLS.
+
+| Instance | Issuer | Use |
+|---|---|---|
+| Development | `https://cheerful-walleye-3066.clerk.accounts.dev` | local dev, Expo Go |
+| Production | `https://clerk.talebrim.com` | release builds |
+
+```bash
+EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=<pk_test_… for dev, pk_live_… for release>
+```
+
+**The session-token claim is the load-bearing setting.** Both instances are
+configured with:
+
+```json
+{"metadata": "{{user.public_metadata}}"}
+```
+
+Without it `auth.jwt() -> 'metadata'` is empty and **every RLS policy denies
+everything** — which fails closed, not open, but presents as a total outage
+rather than a permissions error. If reads suddenly return nothing, check this
+before anything else.
+
+Note the **two different `role` claims** in a Clerk token, which is a live trap
+this project has already hit: the **top-level** `role` is always
+`authenticated` and is what every policy's `to authenticated` matches; the
+**operator** role is the nested `metadata.role`. Conflating them makes
+`is_admin()` false for everyone. A reader needs only the top-level claim —
+this app should never grant `metadata.role`.
+
+⚠️ **The admin dashboard currently runs on the DEVELOPMENT instance.** The
+production cutover was completed, verified, and then rolled back on 2026-09-19
+when its sign-in card stopped rendering; the cause is unresolved. See
+`AGENTS.md`, Deferred Security Tasks item 3, and
+`docs/PRODUCTION-CLERK-CUTOVER.md`. Point this app at the development instance
+too until that is settled, or the two halves of the product will be
+authenticating against different user pools.
+
+### Storage and the CDN
+
+`app_settings` is a single live row and is the source of truth for these —
+read it rather than hardcoding:
+
+| Setting | Live value |
+|---|---|
+| `public_cdn_domain` | `https://fwjrdzzdtshbqrfkgivd.supabase.co` |
+| `bucket_name` | `novelnow-media` |
+| `storage_provider` | `supabase_storage` |
+| `free_chapters_at_start` | `3` |
+| `default_chapter_access` | `locked` |
+
+Cover URLs are built as
+`<public_cdn_domain>/storage/v1/object/public/covers/<cover_path>`. The
+migration's *default* for `public_cdn_domain` is the stale
+`https://cdn.novelnow.app` from before the rename — the live row is correct, so
+read the row. If `app_settings` is ever empty the dashboard falls back to
+`SETTINGS_DEFAULTS`; this app should surface an error rather than invent a
+domain.
+
+---
+
 ## Data Contract — what actually exists in Supabase
 
 > Verified against the live schema on 2026-09-20. The admin dashboard
