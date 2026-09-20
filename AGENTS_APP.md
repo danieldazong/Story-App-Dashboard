@@ -8,6 +8,49 @@ You should think like a senior mobile developer, and implement like someone ship
 
 ---
 
+## STOP — five rules that are not negotiable
+
+Read these before writing any code. Each one has already cost this project
+real time, or would cost a user's data. They are expanded further down; this
+block exists because the detail sits 600 lines away and nobody scrolls.
+
+**1 · The service-role key never enters this app.** Not in `.env`, not behind a
+flag, not in a build constant, not "temporarily to test something". It bypasses
+every RLS policy in this document. Anything needing it runs in an Edge
+Function. If a task seems to require it in the client, the task is wrong.
+
+**2 · Never write to `books`, `chapters`, `app_settings` or `activity_log`.**
+This app is a **reader**. Those tables belong to the admin dashboard
+(`AGENTS.md`, same repo), which is in production at `talebrim.com`. Create your
+own per-user tables; altering theirs breaks a live product.
+
+**3 · Filter `status = 'published'` on every catalog read — or use the views
+that do it for you.** A draft is unfinished admin work. `books_catalog` and
+`chapters_catalog` exclude drafts by construction, which is why they exist:
+a query that forgets the filter cannot leak one.
+
+**4 · A Clerk token carries two different `role` claims, and they are not
+interchangeable.** Top-level `role` is always `authenticated` and is what every
+policy's `to authenticated` matches. The operator role is the **nested**
+`metadata.role`. Conflating them makes `is_admin()` false for everyone and
+every policy denies everything. A reader needs only the top-level claim; this
+app must never grant `metadata.role`.
+
+**5 · Point at the same Clerk instance the dashboard is using.** It is on the
+**development** instance right now (the production cutover was rolled back on
+2026-09-19, cause unresolved). Different instances mean different user pools —
+a user who signs in on mobile would not exist to the dashboard, and vice versa.
+Check before assuming production.
+
+> **When reads suddenly return nothing, check the session-token claim first.**
+> Both Clerk instances are configured with
+> `{"metadata": "{{user.public_metadata}}"}`. Without it, `auth.jwt() ->
+'metadata'` is empty and every policy denies everything. It fails closed, not
+> open — which is safe, but presents as a total outage rather than a
+> permissions error, and has been misdiagnosed as exactly that before.
+
+---
+
 ## Project Overview
 
 We are building **Talebrim**, a read-and-listen mobile app for serialized romance, werewolf, vampire and fantasy fiction.
@@ -587,13 +630,13 @@ Identify the caller with `auth.jwt() ->> 'sub'` (the Clerk user ID, stored as `t
 
 ### Supabase
 
-| | |
-|---|---|
+|              |                                                                                   |
+| ------------ | --------------------------------------------------------------------------------- |
 | Project name | `story-app-dashboad` (the typo is in the real project name — do not "correct" it) |
-| Project ref | `fwjrdzzdtshbqrfkgivd` |
-| Region | `us-east-1` |
-| Instance | `t3.nano` — see the performance ceiling below |
-| API URL | `https://fwjrdzzdtshbqrfkgivd.supabase.co` |
+| Project ref  | `fwjrdzzdtshbqrfkgivd`                                                            |
+| Region       | `us-east-1`                                                                       |
+| Instance     | `t3.nano` — see the performance ceiling below                                     |
+| API URL      | `https://fwjrdzzdtshbqrfkgivd.supabase.co`                                        |
 
 ```bash
 # .env — the anon key is designed to ship in a client; RLS is what protects data.
@@ -617,10 +660,10 @@ not mistaken for a misconfiguration.
 Two instances exist, and **both are registered as Supabase Third-Party Auth
 issuers**, so a token from either is accepted by RLS.
 
-| Instance | Issuer | Use |
-|---|---|---|
+| Instance    | Issuer                                             | Use                |
+| ----------- | -------------------------------------------------- | ------------------ |
 | Development | `https://cheerful-walleye-3066.clerk.accounts.dev` | local dev, Expo Go |
-| Production | `https://clerk.talebrim.com` | release builds |
+| Production  | `https://clerk.talebrim.com`                       | release builds     |
 
 ```bash
 EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=<pk_test_… for dev, pk_live_… for release>
@@ -630,7 +673,7 @@ EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=<pk_test_… for dev, pk_live_… for release>
 configured with:
 
 ```json
-{"metadata": "{{user.public_metadata}}"}
+{ "metadata": "{{user.public_metadata}}" }
 ```
 
 Without it `auth.jwt() -> 'metadata'` is empty and **every RLS policy denies
@@ -658,17 +701,17 @@ authenticating against different user pools.
 `app_settings` is a single live row and is the source of truth for these —
 read it rather than hardcoding:
 
-| Setting | Live value |
-|---|---|
-| `public_cdn_domain` | `https://fwjrdzzdtshbqrfkgivd.supabase.co` |
-| `bucket_name` | `novelnow-media` |
-| `storage_provider` | `supabase_storage` |
-| `free_chapters_at_start` | `3` |
-| `default_chapter_access` | `locked` |
+| Setting                  | Live value                                 |
+| ------------------------ | ------------------------------------------ |
+| `public_cdn_domain`      | `https://fwjrdzzdtshbqrfkgivd.supabase.co` |
+| `bucket_name`            | `novelnow-media`                           |
+| `storage_provider`       | `supabase_storage`                         |
+| `free_chapters_at_start` | `3`                                        |
+| `default_chapter_access` | `locked`                                   |
 
 Cover URLs are built as
 `<public_cdn_domain>/storage/v1/object/public/covers/<cover_path>`. The
-migration's *default* for `public_cdn_domain` is the stale
+migration's _default_ for `public_cdn_domain` is the stale
 `https://cdn.novelnow.app` from before the rename — the live row is correct, so
 read the row. If `app_settings` is ever empty the dashboard falls back to
 `SETTINGS_DEFAULTS`; this app should surface an error rather than invent a
@@ -686,12 +729,12 @@ domain.
 
 ### Tables that exist today
 
-| Table | What it holds | Mobile use |
-|---|---|---|
-| `books` | title, author, short_description, synopsis, genres[], maturity, status, cover_*, default_chapter_access | M3, M4, M7, M8 |
-| `chapters` | book_id, number, title, script_text, audio_path, audio_duration_seconds, access | M4, M5, M6, M9 |
-| `app_settings` | single row: CDN domain, accepted formats, free_chapters_at_start | read-only config |
-| `activity_log` | admin audit trail, append-only | **not for the app** |
+| Table          | What it holds                                                                                            | Mobile use          |
+| -------------- | -------------------------------------------------------------------------------------------------------- | ------------------- |
+| `books`        | title, author, short*description, synopsis, genres[], maturity, status, cover*\*, default_chapter_access | M3, M4, M7, M8      |
+| `chapters`     | book_id, number, title, script_text, audio_path, audio_duration_seconds, access                          | M4, M5, M6, M9      |
+| `app_settings` | single row: CDN domain, accepted formats, free_chapters_at_start                                         | read-only config    |
+| `activity_log` | admin audit trail, append-only                                                                           | **not for the app** |
 
 Two views exist and are **shaped for the dashboard, not for this app**:
 `chapters_list` deliberately omits `script_text` (it exists so the admin
@@ -738,11 +781,11 @@ than the dashboard.
 
 ### Storage buckets and the audio problem
 
-| Bucket | Public? | Consequence for this app |
-|---|---|---|
-| `covers` | **public read** | Build URLs directly from `cover_path` + CDN domain. No signing, cacheable, fast. |
-| `audio` | **private** | **Every track needs a signed URL, minted per playback.** |
-| `scripts` | admin only | Never touched by this app. Prose comes from `chapters.script_text`. |
+| Bucket    | Public?         | Consequence for this app                                                         |
+| --------- | --------------- | -------------------------------------------------------------------------------- |
+| `covers`  | **public read** | Build URLs directly from `cover_path` + CDN domain. No signing, cacheable, fast. |
+| `audio`   | **private**     | **Every track needs a signed URL, minted per playback.**                         |
+| `scripts` | admin only      | Never touched by this app. Prose comes from `chapters.script_text`.              |
 
 **The private audio bucket is the single biggest performance decision left
 open.** Signed URLs expire, so they cannot be cached in the app or handed to
@@ -941,3 +984,16 @@ Before every feature implementation:
 - Replicate UI exactly when designs are provided
 - Treat placeholder content as data, never as constants
 - Protect read/listen parity above all else
+
+And the five non-negotiables from the top of this file, restated because this
+is the section most likely to be re-read on its own:
+
+1. The **service-role key** never enters this app.
+2. Never **write** to `books`, `chapters`, `app_settings` or `activity_log` —
+   this app reads a database the admin dashboard owns and runs in production.
+3. Every catalog read filters **`status = 'published'`**, or uses the views
+   that already do.
+4. A Clerk token's **top-level `role`** (`authenticated`) is not its nested
+   **`metadata.role`** (operator). Never grant the second from this app.
+5. Use the **same Clerk instance as the dashboard** — currently the
+   development one.
