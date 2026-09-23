@@ -469,6 +469,14 @@ export type Database = {
     Functions: {
       clerk_user_id: { Args: never; Returns: string }
       is_admin: { Args: never; Returns: boolean }
+      reader_settings: {
+        Args: never
+        Returns: {
+          default_chapter_access: Database["public"]["Enums"]["chapter_access"]
+          free_chapters_at_start: number
+          public_cdn_domain: string
+        }[]
+      }
     }
     Enums: {
       book_status: "draft" | "published"
