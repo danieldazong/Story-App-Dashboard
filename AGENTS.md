@@ -997,6 +997,8 @@ Fixed by the `chapters_list` view (migration `20260917000003`), which omits `scr
 
 That rule is implemented in two places and they must not drift: `createChapter` (`app/actions/chapters.ts`) resolves explicit access → book default → `app_settings`, and `createImportTarget` (`app/actions/bulk-import.ts`) resolves `number <= freeChaptersAtStart ? "free" : <book default>`. Bulk import resolves the free run itself because it inserts rows directly rather than calling `createChapter` — it needs the chapter id back to mint an upload path against. If either rule changes, change both.
 
+**`books` and `chapters` carry broadcast triggers** (`20260923000002`, applied 2026-09-23 for the mobile app's live updates). After every insert, update or delete touching a published book, `broadcast_catalog_change()` sends the changed ids on the private Realtime topic `catalog`. The function swallows its own errors, so it can never fail a save here. Don't drop or rewrite the triggers without updating the mobile app. They are statement-level on purpose: one message per statement, however many rows it touches.
+
 **Book-level audiobook upload is not built, and must not be.** A single whole-book audio file cannot be reliably split into per-chapter tracks; the mobile player queues one track per chapter, and read/listen parity stores an audio position scoped to a chapter id. A whole-book file breaks that parity, which this document ranks above every other feature. Narration is per-chapter only. Do not re-propose a book-level audio drop.
 
 ---
