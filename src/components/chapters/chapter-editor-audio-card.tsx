@@ -56,6 +56,39 @@ function clearStaleTusFingerprints(): void {
 const CHUNK_SIZE = 6 * 1024 * 1024;
 
 /**
+ * The least lifetime a token may carry into a chunk request.
+ *
+ * Clerk session tokens live 60 seconds, and `getToken()` keeps serving its
+ * cached token until roughly 10 seconds before expiry. A 6 MB chunk measured
+ * ~5 seconds to Cloudflare's nearest edge from the operator's machine
+ * (2026-09-23) and longer to us-east-1 — so a cached token near the end of its
+ * life can expire while its chunk is still in flight. Below this threshold a
+ * fresh token is forced, so every chunk starts with most of a full minute.
+ */
+const MIN_TOKEN_SECONDS = 45;
+
+/**
+ * Seconds until a JWT's `exp`, read from its payload without verifying it.
+ *
+ * Verification is Storage's job; this only decides whether to ask Clerk for a
+ * newer token. Returns null for anything that does not decode, which the
+ * caller treats as "refresh".
+ */
+function tokenSecondsLeft(token: string): number | null {
+  try {
+    const payload = token.split(".")[1];
+    const json = JSON.parse(
+      atob(payload.replace(/-/g, "+").replace(/_/g, "/")),
+    ) as { exp?: unknown };
+    return typeof json.exp === "number"
+      ? Math.round(json.exp - Date.now() / 1000)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Races a Server Action against a timeout.
  *
  * Same guard as the cover upload: a call that needs a Clerk session can hang
@@ -322,6 +355,12 @@ export function ChapterEditorAudioCard({
 
     const endpoint = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/upload/resumable`;
 
+    // What the most recent request carried, so a failure can say which request
+    // it was and how much life its token had. Without this, "the token expired"
+    // and "the token was rejected while valid" look identical.
+    let lastRequest: { method: string; tokenSecondsLeft: number | null } | null =
+      null;
+
     const upload = new tus.Upload(file, {
       endpoint,
       retryDelays: [0, 3000, 5000, 10000, 20000],
@@ -350,10 +389,27 @@ export function ChapterEditorAudioCard({
       // session itself ended; throwing names that, rather than sending an
       // unauthenticated request and reporting whatever Storage says back.
       onBeforeRequest: async (req) => {
-        const token = await getToken();
+        let token = await getToken();
         if (!token) {
           throw new Error("session expired");
         }
+        // A per-request token was the first fix and was NOT enough: the
+        // cached token can be seconds from expiry when a chunk starts, and a
+        // chunk takes seconds to send. Force a fresh one below the threshold.
+        // A failed refresh falls back to the cached token rather than failing
+        // the chunk outright — it may still be valid, and Storage decides.
+        const left = tokenSecondsLeft(token);
+        if (left === null || left < MIN_TOKEN_SECONDS) {
+          try {
+            token = (await getToken({ skipCache: true })) ?? token;
+          } catch {
+            // keep the cached token
+          }
+        }
+        lastRequest = {
+          method: req.getMethod(),
+          tokenSecondsLeft: tokenSecondsLeft(token),
+        };
         req.setHeader("Authorization", `Bearer ${token}`);
       },
       // FALSE, deliberately — and this was a real bug when it was true.
@@ -414,7 +470,29 @@ export function ChapterEditorAudioCard({
         // on this card cost four wrong diagnoses before anyone read the
         // response body (AGENTS.md, prompt 16) — an error that is swallowed is
         // an error that gets diagnosed by guessing.
-        console.error("Narration upload failed", { status, error });
+        //
+        // ONE PLAIN STRING, not an object. The first version logged
+        // `{ status, error }`, and the Next.js dev overlay rendered it as `{}` —
+        // an Error serialises to nothing — so the evidence this line exists to
+        // capture was lost the first time it mattered.
+        const responseBody =
+          error && typeof error === "object" && "originalResponse" in error
+            ? (
+                error as {
+                  originalResponse?: { getBody?: () => unknown };
+                }
+              ).originalResponse?.getBody?.()
+            : undefined;
+        console.error(
+          [
+            "Narration upload failed",
+            `request: ${lastRequest?.method ?? "unknown"}`,
+            `status: ${status ?? "no response"}`,
+            `token seconds left when sent: ${lastRequest?.tokenSecondsLeft ?? "unknown"}`,
+            `response body: ${typeof responseBody === "string" && responseBody ? responseBody : "(empty)"}`,
+            `error: ${error instanceof Error ? error.message : String(error)}`,
+          ].join("\n"),
+        );
         setState({
           status: "failed",
           message: describeUploadError(error, status),
