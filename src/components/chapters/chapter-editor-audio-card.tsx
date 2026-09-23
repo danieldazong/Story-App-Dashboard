@@ -124,14 +124,38 @@ function detectDuration(file: File): Promise<number | null> {
  * browser internal on screen — the same defect `describeDbError` exists to
  * prevent for database errors. Nothing raw reaches the card.
  */
-function describeUploadError(error: unknown): string {
+function describeUploadError(error: unknown, status?: number): string {
   const raw =
     error instanceof Error ? error.message : typeof error === "string" ? error : "";
-  const extra =
+  // The response BODY, which is where Storage says what actually went wrong.
+  // This used to be `String(originalResponse)` — which is "[object Object]",
+  // so every body-only reason was invisible to the matching below.
+  const body =
     error && typeof error === "object" && "originalResponse" in error
-      ? String((error as { originalResponse?: unknown }).originalResponse)
+      ? ((
+          error as { originalResponse?: { getBody?: () => unknown } }
+        ).originalResponse?.getBody?.() ?? "")
       : "";
-  const text = `${raw} ${extra}`;
+  const text = `${raw} ${typeof body === "string" ? body : ""}`;
+
+  // Auth, matched FIRST — before the "expired" branch below, which would
+  // otherwise read "jwt expired" as a stale 24-hour upload URL and send the
+  // operator after the wrong cause.
+  //
+  // A row-level-security denial and an expired token both arrive as 403, and
+  // they mean opposite things: one is "you may not", the other is "you may,
+  // but the pass you showed ran out". Only the second is fixed by retrying.
+  if (/row-level security|violates.*policy/i.test(text)) {
+    return "Your account isn't allowed to upload narration. Ask an admin to check your role.";
+  }
+  if (
+    status === 401 ||
+    /jwt|"?exp"? claim|token.*expired|unauthori[sz]ed|invalid signature|session expired/i.test(
+      text,
+    )
+  ) {
+    return "Your sign-in lapsed partway through the upload. Retry — it will use a fresh session.";
+  }
 
   // Storage's own size ceiling, which sits BELOW the bucket's file_size_limit
   // and cannot be raised from the bucket config. Observed verbatim as
@@ -142,24 +166,42 @@ function describeUploadError(error: unknown): string {
   // Matched before the generic branches: without this it fell through to
   // "Check your connection", sending an operator to debug their network over a
   // file that was simply too big.
-  if (/\b413\b|maximum size exceeded|payload too large|entity too large/i.test(text)) {
+  if (
+    status === 413 ||
+    /maximum size exceeded|payload too large|entity too large/i.test(text)
+  ) {
     return "This file is larger than storage accepts. Try a smaller file, or split the narration.";
   }
-  if (/\b409\b|conflict/i.test(text)) {
+  // The bucket's allowed_mime_types is the real boundary, and it has drifted
+  // from Settings before (Settings lists .aac; the bucket does not accept it).
+  if (status === 415 || /mime type|invalid_mime/i.test(text)) {
+    return "Storage doesn't accept this audio type. Use .m4a, .mp3 or .wav.";
+  }
+  if (status === 409 || /\bconflict\b/i.test(text)) {
     return "Upload conflict — another transfer is writing to this path. Retry.";
   }
   // An expired resumable URL surfaces as a 404/410 against an upload that no
   // longer exists. Treated distinctly because the remedy differs: a fresh token
   // is required, and Retry mints one rather than reusing the dead URL.
-  if (/\b(404|410)\b|expired|not found/i.test(text)) {
+  if (status === 404 || status === 410) {
     return "Upload link expired after 24 hours. Retry to get a fresh link.";
   }
   // Matched on shape, exactly as isNetworkError does for database failures:
   // a transport error carries no status code to key off.
-  if (/failed to fetch|fetch failed|network|offline|ERR_INTERNET/i.test(text)) {
+  if (
+    status === undefined &&
+    /failed to fetch|fetch failed|network|offline|ERR_INTERNET/i.test(text)
+  ) {
     return "Couldn't reach storage. Check your connection and retry.";
   }
-  return "Upload failed. Check your connection and retry.";
+  // The honest fallback. This used to read "Check your connection" — which
+  // is precisely the one cause already ruled out by the branch above, so it
+  // sent operators to debug their network over a failure that had a status
+  // code and a reason. The status is stated so the next unknown is
+  // diagnosable from the card alone; the full error goes to the console.
+  return status
+    ? `Upload failed — storage returned ${status}. Retry; if it fails again, the details are in the browser console.`
+    : "Upload failed. Retry; if it fails again, the details are in the browser console.";
 }
 
 export function ChapterEditorAudioCard({
@@ -291,7 +333,29 @@ export function ChapterEditorAudioCard({
       // x-upsert is deliberately absent: audio paths are immutable, and
       // overwriting serves stale audio through the CDN until propagation
       // catches up — for narration that means a reader hearing the previous take.
-      headers: { authorization: `Bearer ${clerkToken}` },
+      //
+      // A FRESH TOKEN PER REQUEST, not one captured at the start (2026-09-23).
+      //
+      // This was `headers: { authorization: `Bearer ${clerkToken}` }` — the
+      // token fetched once above and replayed on every 6 MB chunk. Clerk
+      // session tokens live 60 seconds (AGENTS.md records the same lifetime
+      // from prompt 12's storage probes). Any transfer longer than a minute
+      // therefore started sending an EXPIRED token partway through, Storage
+      // rejected the next PATCH, and the card showed its catch-all message. The
+      // failure scaled with upload TIME, not file size — which is why a file
+      // under the 50 MB ceiling still failed.
+      //
+      // getToken() returns Clerk's cached token and only mints a new one near
+      // expiry, so calling it per chunk costs almost nothing. A null means the
+      // session itself ended; throwing names that, rather than sending an
+      // unauthenticated request and reporting whatever Storage says back.
+      onBeforeRequest: async (req) => {
+        const token = await getToken();
+        if (!token) {
+          throw new Error("session expired");
+        }
+        req.setHeader("Authorization", `Bearer ${token}`);
+      },
       // FALSE, deliberately — and this was a real bug when it was true.
       //
       // With it on, tus sends the first chunk as the body of the CREATION POST.
@@ -345,11 +409,15 @@ export function ChapterEditorAudioCard({
         // The path is abandoned with the attempt. Left set, a later Cancel
         // would delete an object belonging to a previous, unrelated try.
         uploadedPathRef.current = null;
+        // Logged whole, every time. The card shows a translated message; this
+        // is the only place the real response survives. The last audio failure
+        // on this card cost four wrong diagnoses before anyone read the
+        // response body (AGENTS.md, prompt 16) — an error that is swallowed is
+        // an error that gets diagnosed by guessing.
+        console.error("Narration upload failed", { status, error });
         setState({
           status: "failed",
-          message: describeUploadError(
-            status ? new Error(`${status} ${String(error)}`) : error,
-          ),
+          message: describeUploadError(error, status),
         });
       },
       onSuccess: () => {
