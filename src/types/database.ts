@@ -303,6 +303,185 @@ export type Database = {
           },
         ]
       }
+      library_items: {
+        Row: {
+          book_id: string
+          created_at: string
+          id: string
+          user_id: string
+        }
+        Insert: {
+          book_id: string
+          created_at?: string
+          id?: string
+          user_id?: string
+        }
+        Update: {
+          book_id?: string
+          created_at?: string
+          id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "library_items_book_id_fkey"
+            columns: ["book_id"]
+            isOneToOne: false
+            referencedRelation: "books"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "library_items_book_id_fkey"
+            columns: ["book_id"]
+            isOneToOne: false
+            referencedRelation: "books_catalog"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "library_items_book_id_fkey"
+            columns: ["book_id"]
+            isOneToOne: false
+            referencedRelation: "chapters_needing_attention"
+            referencedColumns: ["book_id"]
+          },
+        ]
+      }
+      reading_positions: {
+        Row: {
+          audio_ms: number | null
+          book_id: string
+          chapter_id: string
+          id: string
+          last_mode: string
+          text_offset: number | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          audio_ms?: number | null
+          book_id: string
+          chapter_id: string
+          id?: string
+          last_mode: string
+          text_offset?: number | null
+          updated_at?: string
+          user_id?: string
+        }
+        Update: {
+          audio_ms?: number | null
+          book_id?: string
+          chapter_id?: string
+          id?: string
+          last_mode?: string
+          text_offset?: number | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reading_positions_book_id_fkey"
+            columns: ["book_id"]
+            isOneToOne: false
+            referencedRelation: "books"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reading_positions_book_id_fkey"
+            columns: ["book_id"]
+            isOneToOne: false
+            referencedRelation: "books_catalog"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reading_positions_book_id_fkey"
+            columns: ["book_id"]
+            isOneToOne: false
+            referencedRelation: "chapters_needing_attention"
+            referencedColumns: ["book_id"]
+          },
+          {
+            foreignKeyName: "reading_positions_chapter_id_fkey"
+            columns: ["chapter_id"]
+            isOneToOne: false
+            referencedRelation: "chapters"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reading_positions_chapter_id_fkey"
+            columns: ["chapter_id"]
+            isOneToOne: false
+            referencedRelation: "chapters_catalog"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reading_positions_chapter_id_fkey"
+            columns: ["chapter_id"]
+            isOneToOne: false
+            referencedRelation: "chapters_list"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reading_positions_chapter_id_fkey"
+            columns: ["chapter_id"]
+            isOneToOne: false
+            referencedRelation: "chapters_needing_attention"
+            referencedColumns: ["chapter_id"]
+          },
+        ]
+      }
+      unlocks: {
+        Row: {
+          chapter_id: string
+          created_at: string
+          id: string
+          source: string
+          user_id: string
+        }
+        Insert: {
+          chapter_id: string
+          created_at?: string
+          id?: string
+          source: string
+          user_id?: string
+        }
+        Update: {
+          chapter_id?: string
+          created_at?: string
+          id?: string
+          source?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "unlocks_chapter_id_fkey"
+            columns: ["chapter_id"]
+            isOneToOne: false
+            referencedRelation: "chapters"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "unlocks_chapter_id_fkey"
+            columns: ["chapter_id"]
+            isOneToOne: false
+            referencedRelation: "chapters_catalog"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "unlocks_chapter_id_fkey"
+            columns: ["chapter_id"]
+            isOneToOne: false
+            referencedRelation: "chapters_list"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "unlocks_chapter_id_fkey"
+            columns: ["chapter_id"]
+            isOneToOne: false
+            referencedRelation: "chapters_needing_attention"
+            referencedColumns: ["chapter_id"]
+          },
+        ]
+      }
     }
     Views: {
       books_catalog: {
