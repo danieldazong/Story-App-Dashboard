@@ -1,6 +1,7 @@
 -- RLS verification for the mobile reader tables: reading_positions, unlocks
 -- and library_items (migrations 20260923121634, 20260923121638,
--- 20260923121642).
+-- 20260923121642), plus the server-set reading_positions.updated_at
+-- (20260924190305).
 --
 -- Run against the linked project:
 --   npx supabase db query --linked -f supabase/verify/reader_tables_rls.sql
@@ -71,6 +72,13 @@ begin
         ('reading_positions', 'A', 'sees none of B''s rows', 'select count(*) from public.reading_positions', 'rows=0'),
         ('reading_positions', 'A', 'inserts own row (user_id defaults to caller)', 'insert into public.reading_positions (chapter_id, book_id, audio_ms, last_mode) values (:c1, :b1, 5000, ''audio'')', 'rows=1'),
         ('reading_positions', 'A', 'then sees exactly its own row', 'select count(*) from public.reading_positions where user_id = :a', 'rows=1'),
+        ('reading_positions', 'A', 'upserts its text side (the parity writer''s write)', 'insert into public.reading_positions (chapter_id, book_id, text_offset, last_mode) values (:c1, :b1, 42, ''text'') on conflict (user_id, chapter_id) do update set book_id = excluded.book_id, text_offset = excluded.text_offset, last_mode = excluded.last_mode', 'rows=1'),
+        ('reading_positions', 'A', 'still one row, and the upsert kept its audio side', 'select count(*) from public.reading_positions where user_id = :a and audio_ms = 5000 and text_offset = 42', 'rows=1'),
+        ('reading_positions', 'A', 'an update cannot set its own updated_at', 'update public.reading_positions set updated_at = ''2000-01-01'' where user_id = :a', 'rows=1'),
+        ('reading_positions', 'A', 'the server set updated_at on that update', 'select count(*) from public.reading_positions where user_id = :a and updated_at > ''2001-01-01''', 'rows=1'),
+        ('reading_positions', 'A', 'an insert cannot set its own updated_at', 'insert into public.reading_positions (chapter_id, book_id, text_offset, last_mode, updated_at) values (:c2, :b1, 1, ''text'', ''2000-01-01'')', 'rows=1'),
+        ('reading_positions', 'A', 'the server set updated_at on that insert', 'select count(*) from public.reading_positions where user_id = :a and chapter_id = :c2 and updated_at > ''2001-01-01''', 'rows=1'),
+        ('reading_positions', 'A', 'removes that second row', 'delete from public.reading_positions where user_id = :a and chapter_id = :c2', 'rows=1'),
         ('reading_positions', 'A', 'sees nothing when asking for B''s rows', 'select count(*) from public.reading_positions where user_id = :b', 'rows=0'),
         ('reading_positions', 'A', 'cannot insert a row as B', 'insert into public.reading_positions (user_id, chapter_id, book_id, text_offset, last_mode) values (:b, :c2, :b1, 1, ''text'')', 'error 42501'),
         ('reading_positions', 'A', 'cannot update B''s row', 'update public.reading_positions set audio_ms = 1 where user_id = :b', 'rows=0'),
