@@ -23,10 +23,14 @@ import {
   setBookCover,
 } from "@/app/actions/covers";
 import { formatBytes } from "@/lib/catalog";
+import { COVER_CACHE_CONTROL, prepareCover } from "@/lib/cover-image";
 import type { CoverAsset } from "@/types/catalog";
 
 const ACCEPTED_TYPES = ["image/jpeg", "image/png", "image/webp"];
+/** The uploaded file's limit, matching the bucket. It applies after compression. */
 const MAX_BYTES = 2 * 1024 * 1024;
+/** The chosen file's limit. A 20 MB source compresses far below `MAX_BYTES`. */
+const MAX_SOURCE_BYTES = 20 * 1024 * 1024;
 const TARGET_WIDTH = 800;
 const TARGET_HEIGHT = 1200;
 const REQUEST_TIMEOUT_MS = 20_000;
@@ -54,6 +58,7 @@ function withTimeout<T>(promise: Promise<T>, message: string): Promise<T> {
 
 type CardState =
   | { status: "idle" }
+  | { status: "preparing" }
   | { status: "uploading"; uploadedBytes: number; totalBytes: number }
   | { status: "persisting" }
   | { status: "removing" }
@@ -87,19 +92,6 @@ export type CoverThumbnailCardHandle = {
   flush: (bookId: string, report?: (label: string) => void) => Promise<void>;
 };
 
-/** Reads intrinsic dimensions so a wrong aspect ratio can be warned about. */
-function readDimensions(
-  url: string,
-): Promise<{ width: number; height: number }> {
-  return new Promise((resolve) => {
-    const image = new window.Image();
-    image.onload = () =>
-      resolve({ width: image.naturalWidth, height: image.naturalHeight });
-    image.onerror = () => resolve({ width: 0, height: 0 });
-    image.src = url;
-  });
-}
-
 /**
  * Uploads straight to storage with XHR rather than fetch, because only XHR
  * exposes upload progress events. The file body never passes through the app
@@ -114,6 +106,7 @@ function uploadToSignedUrl(
     const request = new XMLHttpRequest();
     request.open("PUT", url, true);
     request.setRequestHeader("Content-Type", file.type);
+    request.setRequestHeader("Cache-Control", COVER_CACHE_CONTROL);
 
     request.upload.onprogress = (event) => {
       if (event.lengthComputable) onProgress(event.loaded);
@@ -157,6 +150,7 @@ export const CoverThumbnailCard = forwardRef<
   // same deferral as the Manuscript card and Chapter composer.
   const isDeferred = bookId === "";
   const busy =
+    state.status === "preparing" ||
     state.status === "uploading" ||
     state.status === "persisting" ||
     state.status === "removing";
@@ -177,13 +171,27 @@ export const CoverThumbnailCard = forwardRef<
         }
       : null;
 
-  async function validateAndHold(file: File): Promise<PendingFile | null> {
-    if (!ACCEPTED_TYPES.includes(file.type)) {
+  async function validateAndHold(source: File): Promise<PendingFile | null> {
+    if (!ACCEPTED_TYPES.includes(source.type)) {
       toast.error(
-        `${file.name} is a ${file.type || "unrecognised"} file. Covers must be JPG, PNG or WebP.`,
+        `${source.name} is a ${source.type || "unrecognised"} file. Covers must be JPG, PNG or WebP.`,
       );
       return null;
     }
+    if (source.size > MAX_SOURCE_BYTES) {
+      toast.error(
+        `${source.name} is ${formatBytes(source.size)}. Choose an image of 20 MB or smaller.`,
+      );
+      return null;
+    }
+
+    // Compressed to WebP before anything else, so the preview, the size shown
+    // and the upload are all the file readers will download (AGENTS.md
+    // § Upload Rules, "Cover images").
+    setState({ status: "preparing" });
+    const { file, width, height } = await prepareCover(source);
+    setState({ status: "idle" });
+
     if (file.size > MAX_BYTES) {
       toast.error(
         `${file.name} is ${formatBytes(file.size)}. Covers must be 2 MB or smaller.`,
@@ -192,7 +200,6 @@ export const CoverThumbnailCard = forwardRef<
     }
 
     const previewUrl = URL.createObjectURL(file);
-    const { width, height } = await readDimensions(previewUrl);
 
     // A wrong ratio is a warning, never a rejection: operators source art from
     // many places, and a visibly-wrong cover is fixable where an unuploadable
@@ -371,7 +378,11 @@ export const CoverThumbnailCard = forwardRef<
       />
 
       <div className="aspect-[2/3] w-full max-w-[200px] overflow-hidden rounded-input border border-dashed border-border bg-page">
-        {state.status === "uploading" ? (
+        {state.status === "preparing" ? (
+          <div className="flex h-full flex-col items-center justify-center p-4 text-center">
+            <p className="text-helper text-muted">Compressing…</p>
+          </div>
+        ) : state.status === "uploading" ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center">
             <p className="text-helper text-muted">Uploading…</p>
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-border">
@@ -466,7 +477,8 @@ export const CoverThumbnailCard = forwardRef<
       )}
 
       <p className="field-group__helper">
-        JPG, PNG or WebP · {TARGET_WIDTH}×{TARGET_HEIGHT} · max 2MB
+        JPG, PNG or WebP · {TARGET_WIDTH}×{TARGET_HEIGHT} · max 20MB · saved
+        as WebP
       </p>
 
       <Dialog

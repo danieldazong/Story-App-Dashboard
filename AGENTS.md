@@ -875,9 +875,43 @@ Chapter narration runs 20–100MB per file, far above the ~6MB threshold at whic
 - **Do not use `x-upsert` to replace audio.** Supabase advises against overwriting because CDN propagation lag serves stale content. Replacing a narration writes a **new immutable path** and updates the row to point at it.
 - Show real per-file progress with percent and bytes, plus distinct processing, complete and failed-with-retry states.
 
+### Narration format
+
+Decided by the owner on 2026-09-25, during the mobile app's downloads review.
+
+**Narration is AAC in `.m4a`, mono, 64 kbps, with the moov atom first ("fast start").** That is about 0.5 MB a minute. WAV runs about 2.8 MB a minute, so a 10-minute chapter shrinks from about 28 MB to about 5 MB. Use 96 kbps when a chapter carries music or effects. The mobile app plays `.m4a` natively on Android and iOS.
+
+Why it matters beyond storage:
+- **Start delay.** The mobile player buffers about 2.5 seconds of audio before it starts, so on a slow network a WAV file's size, not the code, sets most of the delay.
+- **Egress.** Every play and every download moves the whole file.
+- **Offline downloads.** A 40-chapter book is about 1.7 GB as WAV and under 300 MB as AAC.
+
+**Convert before upload.** The dashboard does not transcode: uploads go straight from the browser to Storage over TUS (see above). With ffmpeg:
+
+```bash
+ffmpeg -i chapter.wav -ac 1 -ar 44100 -c:a aac -b:a 64k -movflags +faststart chapter.m4a
+```
+
+`-movflags +faststart` is the part most converters leave out, and without it the player may have to fetch the end of the file before it can start.
+
+**Settings accept `.m4a` and `.mp3` only.** Keep `.wav` out of the accepted audio formats. MP3 at 64–96 kbps mono is an acceptable fallback. Do not list `.aac`: `createAudioUploadUrl`'s `MIME_BY_EXTENSION` has no mapping for it, and the `audio` bucket's `allowed_mime_types` has no `audio/aac`. A listed `.aac` therefore fails with "configured in Settings but not supported for upload yet". The live list held both `.wav` and `.aac` on 2026-09-25, and the owner removes them in Settings. The bucket still allows `audio/wav`; removing it would take a migration, which is not planned.
+
+**Live on 2026-09-25:** 8 narrated chapters. 6 were already `.m4a`, at about 190 kbps; they are short and stay as they are. 2 were WAV: Eternal Eclipse ch1 and Man of Ashes 001 ch1. The owner is converting both and replacing them through the chapter editor, which writes a new immutable path and measures the duration again. Readers' audio positions stay valid, because the timing doesn't change.
+
 ### Cover images
 
-Standard uploads are fine — covers are small. Still upload direct-to-storage rather than through a route handler.
+Standard uploads, direct to storage rather than through a route handler.
+
+**Covers are compressed to WebP in the browser before upload** (`lib/cover-image.ts`, decided 2026-09-25). Every mobile reader downloads the stored file on every cover card, so it is compressed once here rather than on every phone.
+
+- WebP at quality 0.85, at the same resolution. Only a source larger than 1200×1800 is scaled down: the mobile app's widest cover, the Discover hero, is about 1080px wide on a 3x phone.
+- Measured 2026-09-25 in Chrome on the three live covers, 848×1264 PNGs: 1.58–1.72 MB each became 130–163 KB, with no visible difference, title lettering included.
+- The original is uploaded instead when the browser can't encode WebP (Safari hands back a PNG), when the WebP is no smaller and no resize was needed, or when the image can't be decoded.
+- A chosen file may be up to 20 MB. The 2 MB limit, the bucket's, applies to the file uploaded.
+- The card shows "Compressing…" meanwhile. The preview, file name and size it shows are the uploaded file's.
+- **Every cover upload sends `Cache-Control: max-age=31536000`** (`COVER_CACHE_CONTROL`), and Storage serves it back. A cover path is never reused, so a year is safe. Without the header Storage stores `no-cache`: Supabase's CDN missed on every request, and a browser re-checked each cover on every view. Storage's CORS allows the header.
+- Supabase's on-the-fly image transformations (`/storage/v1/render/image/`) would resize per screen, but they are a paid-plan feature and answer `403 FeatureNotEnabled` on this project.
+- **The three live covers were replaced on 2026-09-25**, with the owner's approval, by a one-off script using the service-role key. It was not added to the repo. Each became a WebP at quality 85 and the same 848×1264, 1.58–1.72 MB → 123–150 KB, uploaded with the one-year header to a new path. The script checked each new file loaded before pointing the book at it, logged "`<title>` — cover updated", and deleted the old PNG. Afterwards the CDN answered HIT for all three.
 
 ### Scripts
 
