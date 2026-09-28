@@ -384,6 +384,12 @@ deno_version = 2
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
+# The mobile app's new-chapter alerts. Called by pg_cron with a shared secret,
+# never with a user's token, so the platform's JWT check is off and the
+# function checks the secret itself (Supabase's docs for the sb_ keys).
+[functions.notify-new-chapters]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327

@@ -16,6 +16,8 @@ const eslintConfig = defineConfig([
     ".commandcode/**",
     "Prompts/**",
     "material/**",
+    // Supabase Edge Functions run on Deno, not Next.js.
+    "supabase/functions/**",
   ]),
 ]);
 

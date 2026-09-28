@@ -164,6 +164,43 @@ export type Database = {
         }
         Relationships: []
       }
+      book_alerts: {
+        Row: {
+          book_id: string
+          last_sent_at: string
+        }
+        Insert: {
+          book_id: string
+          last_sent_at: string
+        }
+        Update: {
+          book_id?: string
+          last_sent_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "book_alerts_book_id_fkey"
+            columns: ["book_id"]
+            isOneToOne: true
+            referencedRelation: "books"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "book_alerts_book_id_fkey"
+            columns: ["book_id"]
+            isOneToOne: true
+            referencedRelation: "books_catalog"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "book_alerts_book_id_fkey"
+            columns: ["book_id"]
+            isOneToOne: true
+            referencedRelation: "chapters_needing_attention"
+            referencedColumns: ["book_id"]
+          },
+        ]
+      }
       books: {
         Row: {
           author: string
@@ -220,6 +257,77 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      chapter_alerts: {
+        Row: {
+          book_id: string
+          chapter_id: string
+          found_at: string
+          sent_at: string | null
+        }
+        Insert: {
+          book_id: string
+          chapter_id: string
+          found_at?: string
+          sent_at?: string | null
+        }
+        Update: {
+          book_id?: string
+          chapter_id?: string
+          found_at?: string
+          sent_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chapter_alerts_book_id_fkey"
+            columns: ["book_id"]
+            isOneToOne: false
+            referencedRelation: "books"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chapter_alerts_book_id_fkey"
+            columns: ["book_id"]
+            isOneToOne: false
+            referencedRelation: "books_catalog"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chapter_alerts_book_id_fkey"
+            columns: ["book_id"]
+            isOneToOne: false
+            referencedRelation: "chapters_needing_attention"
+            referencedColumns: ["book_id"]
+          },
+          {
+            foreignKeyName: "chapter_alerts_chapter_id_fkey"
+            columns: ["chapter_id"]
+            isOneToOne: true
+            referencedRelation: "chapters"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chapter_alerts_chapter_id_fkey"
+            columns: ["chapter_id"]
+            isOneToOne: true
+            referencedRelation: "chapters_catalog"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chapter_alerts_chapter_id_fkey"
+            columns: ["chapter_id"]
+            isOneToOne: true
+            referencedRelation: "chapters_list"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chapter_alerts_chapter_id_fkey"
+            columns: ["chapter_id"]
+            isOneToOne: true
+            referencedRelation: "chapters_needing_attention"
+            referencedColumns: ["chapter_id"]
+          },
+        ]
       }
       chapters: {
         Row: {
@@ -345,6 +453,51 @@ export type Database = {
             referencedColumns: ["book_id"]
           },
         ]
+      }
+      push_tickets: {
+        Row: {
+          created_at: string
+          id: string
+          token: string
+        }
+        Insert: {
+          created_at?: string
+          id: string
+          token: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          token?: string
+        }
+        Relationships: []
+      }
+      push_tokens: {
+        Row: {
+          created_at: string
+          id: string
+          platform: string
+          token: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          platform?: string
+          token: string
+          updated_at?: string
+          user_id?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          platform?: string
+          token?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
       }
       reading_positions: {
         Row: {
@@ -648,6 +801,20 @@ export type Database = {
     Functions: {
       clerk_user_id: { Args: never; Returns: string }
       is_admin: { Args: never; Returns: boolean }
+      notify_due_books: {
+        Args: never
+        Returns: {
+          book_id: string
+          chapters: Json
+          title: string
+          tokens: string[]
+        }[]
+      }
+      notify_find_new_chapters: { Args: never; Returns: number }
+      notify_mark_sent: {
+        Args: { p_book_id: string; p_chapter_ids: string[]; p_sent: boolean }
+        Returns: undefined
+      }
       reader_settings: {
         Args: never
         Returns: {
@@ -655,6 +822,10 @@ export type Database = {
           free_chapters_at_start: number
           public_cdn_domain: string
         }[]
+      }
+      set_push_token: {
+        Args: { p_enabled: boolean; p_token: string }
+        Returns: undefined
       }
     }
     Enums: {
