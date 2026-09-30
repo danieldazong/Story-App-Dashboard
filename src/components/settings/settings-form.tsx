@@ -433,7 +433,7 @@ function PublishingDefaultsCard() {
               />
             </FormControl>
             <p className="field-group__helper">
-              Chapters below this number are always free.
+              New chapters up to this number are created free. You can lock any chapter afterwards in its editor.
             </p>
             <FormMessage />
           </FormItem>

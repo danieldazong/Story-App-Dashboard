@@ -1,6 +1,8 @@
--- Verification for the mobile app's new-chapter alerts (migration
--- 20260928120000): push_tokens and set_push_token(), the three server-only
--- tables, and the notify-new-chapters job's SQL steps.
+-- Verification for the mobile app's new-chapter alerts (migrations
+-- 20260928120000 and 20260930130000): push_tokens and set_push_token(), the
+-- three server-only tables, and the notify-new-chapters job's SQL steps.
+-- Since 20260930130000 a book is due as soon as it has an unannounced
+-- chapter: no quiet wait, no 24-hour cap.
 --
 -- Run against the linked project:
 --   npx supabase db query --linked -f supabase/verify/new_chapter_alerts_rls.sql
@@ -62,6 +64,11 @@ begin
       order by c.id
       limit 1;
 
+    -- The live job may have alerted this book already (a real alert: first
+    -- seen 2026-09-30). Its row is set aside here, and comes back with the
+    -- rollback, so the checks below start from a book never alerted.
+    delete from public.book_alerts where book_id = bp;
+
     -- Seeded as the table owner, which RLS does not restrict. B has a phone of
     -- its own; C has the published book on My List and a phone, for the job.
     insert into public.push_tokens (user_id, token)
@@ -120,17 +127,14 @@ begin
         ('job', 'owner', 'a chapter is forgotten, as if just published', 'delete from public.chapter_alerts where chapter_id = {cp}', 'rows=1'),
         ('job', 'service', 'finds it', 'select public.notify_find_new_chapters()', 'rows=1'),
         ('job', 'service', 'records it unsent', 'select count(*) from public.chapter_alerts where chapter_id = {cp} and sent_at is null', 'rows=1'),
-        ('job', 'service', 'not due while it is new', 'select count(*) from public.notify_due_books() where book_id = {bp}', 'rows=0'),
-        ('job', 'owner', 'it was found 20 minutes ago', 'update public.chapter_alerts set found_at = now() - interval ''20 minutes'' where chapter_id = {cp}', 'rows=1'),
-        ('job', 'service', 'due once quiet, naming one chapter and C''s phone', 'select count(*) from public.notify_due_books() where book_id = {bp} and jsonb_array_length(chapters) = 1 and tokens = array[{phone_c}]', 'rows=1'),
+        -- Among the phones: real readers with the book on My List are named too.
+        ('job', 'service', 'due at once, naming one chapter and C''s phone', 'select count(*) from public.notify_due_books() where book_id = {bp} and jsonb_array_length(chapters) = 1 and {phone_c} = any (tokens)', 'rows=1'),
         ('job', 'service', 'never names a phone without the book on My List', 'select count(*) from public.notify_due_books() where book_id = {bp} and {phone_b} = any (tokens)', 'rows=0'),
-        ('job', 'owner', 'the book alerted an hour ago', 'insert into public.book_alerts (book_id, last_sent_at) values ({bp}, now() - interval ''1 hour'')', 'rows=1'),
-        ('job', 'service', 'held back by the 24-hour cap', 'select count(*) from public.notify_due_books() where book_id = {bp}', 'rows=0'),
-        ('job', 'owner', 'the book alerted 25 hours ago', 'update public.book_alerts set last_sent_at = now() - interval ''25 hours'' where book_id = {bp}', 'rows=1'),
-        ('job', 'service', 'due again', 'select count(*) from public.notify_due_books() where book_id = {bp}', 'rows=1'),
+        ('job', 'owner', 'the book alerted a minute ago', 'insert into public.book_alerts (book_id, last_sent_at) values ({bp}, now() - interval ''1 minute'')', 'rows=1'),
+        ('job', 'service', 'still due: no daily cap', 'select count(*) from public.notify_due_books() where book_id = {bp}', 'rows=1'),
         ('job', 'service', 'marks it sent', 'select count(*) from (select public.notify_mark_sent({bp}, array[{cp}]::uuid[], true)) s', 'rows=1'),
         ('job', 'service', 'the chapter is sent', 'select count(*) from public.chapter_alerts where chapter_id = {cp} and sent_at is not null', 'rows=1'),
-        ('job', 'service', 'the cap starts again', 'select count(*) from public.book_alerts where book_id = {bp} and last_sent_at = now()', 'rows=1'),
+        ('job', 'service', 'records when the book last alerted', 'select count(*) from public.book_alerts where book_id = {bp} and last_sent_at = now()', 'rows=1'),
         ('job', 'service', 'not due once sent', 'select count(*) from public.notify_due_books() where book_id = {bp}', 'rows=0'),
         ('job', 'owner', 'a draft book''s chapter is forgotten (none if no draft has text)', 'delete from public.chapter_alerts where chapter_id = {dc}', 'rows=0'),
         ('job', 'service', 'a draft book''s chapter is never found', 'select count(*) from (select public.notify_find_new_chapters()) s cross join public.chapter_alerts a where a.chapter_id = {dc}', 'rows=0')

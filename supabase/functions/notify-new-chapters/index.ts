@@ -1,8 +1,8 @@
 // notify-new-chapters: new-chapter alerts for the Talebrim mobile app (its
 // prompt 23a). The project's first Edge Function.
 //
-// Called every 5 minutes by pg_cron through pg_net (migration
-// 20260928130000), with a shared secret in the `x-notify-secret` header: the
+// Called every minute by pg_cron through pg_net (migration 20260928130000;
+// every 5 minutes until 20260930130000), with a shared secret in the `x-notify-secret` header: the
 // same value is in Supabase Vault, where the schedule reads it, and in this
 // function's secrets as NOTIFY_CRON_SECRET. Any other caller gets 403. It is
 // deployed with verify_jwt off (supabase/config.toml), as Supabase's docs
@@ -11,14 +11,16 @@
 //
 // Each run:
 //   1. Checks the receipts of tickets at least 15 minutes old, deletes the
-//      tokens Expo reports as DeviceNotRegistered, and drops tickets older
-//      than a day.
+//      tokens Expo reports as DeviceNotRegistered, counts every other
+//      receipt error by its code in the run's report (`receipt_errors`), and
+//      drops tickets older than a day.
 //   2. Records chapters newly readable in published books
 //      (notify_find_new_chapters()).
-//   3. For each book due an alert (notify_due_books(): quiet for 10 minutes,
-//      not alerted in 24 hours), sends one message per phone of each reader
-//      with the book on My List, in batches of 100, then marks the chapters
-//      sent (notify_mark_sent()). A book on no one's list is marked sent with
+//   3. For each book due an alert (notify_due_books(): any readable chapter
+//      not yet announced; since 20260930130000 with no quiet wait and no
+//      24-hour cap), sends one message per phone of each reader with the
+//      book on My List, in batches of 100, then marks the chapters sent
+//      (notify_mark_sent()). Chapters found in the same run share one alert. A book on no one's list is marked sent with
 //      nothing sent. A failed send leaves its chapters for the next run.
 //
 // It never runs inside a dashboard write, so nothing it does can fail one.
@@ -32,8 +34,13 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 
 const EXPO_SEND_URL = "https://exp.host/--/api/v2/push/send";
 const EXPO_RECEIPTS_URL = "https://exp.host/--/api/v2/push/getReceipts";
-/** The mobile app's Android channel, created when a reader turns alerts on. */
-const CHANNEL_ID = "new-chapters";
+/**
+ * The mobile app's Android channel, created when a reader turns alerts on. High
+ * importance, so the alert pops up. "new-chapters" until 2026-09-30: default
+ * importance, which put alerts silently in the shade. A phone that hasn't made
+ * the new channel yet gets Firebase's fallback channel, never nothing.
+ */
+const CHANNEL_ID = "chapter-alerts";
 /** Expo takes at most 100 messages per request. */
 const SEND_BATCH = 100;
 /** And at most 1000 receipt ids per request. */
@@ -42,6 +49,13 @@ const RECEIPT_BATCH = 1000;
 const RECEIPT_AFTER_MS = 15 * 60_000;
 /** A ticket whose receipt never came is dropped after a day. */
 const TICKET_TTL_MS = 24 * 60 * 60_000;
+/**
+ * FCM's high priority. Expo's default on Android is normal, which a phone
+ * holds while it is idle (Doze), and an aggressive battery manager can hold
+ * indefinitely: the owner's first alert never showed (2026-09-30). High is
+ * for exactly this, a message the reader sees as a notification.
+ */
+const PRIORITY = "high";
 
 type Chapter = { id: string; number: number; title: string | null };
 type DueBook = { book_id: string; title: string | null; chapters: Chapter[] | null; tokens: string[] };
@@ -58,7 +72,14 @@ type Report = {
   books_failed: number;
   messages: number;
   tokens_removed: number;
+  /** Tickets Expo refused at send, and receipts that came back an error, by error code. */
+  ticket_errors: Record<string, number>;
+  receipt_errors: Record<string, number>;
 };
+
+function countError(counts: Record<string, number>, code: string): void {
+  counts[code] = (counts[code] ?? 0) + 1;
+}
 
 /** The project's secret key, from the runtime: sb_secret_ first, the legacy service-role key as a fallback. */
 function secretKey(): string {
@@ -156,7 +177,12 @@ async function checkReceipts(db: SupabaseClient, accessToken: string, report: Re
     // Not ready yet: tried again next run, until the ticket is a day old.
     if (!receipt) continue;
     answered.push(ticket.id);
-    if (receipt.status === "error" && receipt.details?.error === "DeviceNotRegistered") unregistered.push(ticket.token);
+    if (receipt.status !== "error") continue;
+    const code = receipt.details?.error ?? "unknown";
+    countError(report.receipt_errors, code);
+    if (code === "DeviceNotRegistered") unregistered.push(ticket.token);
+    // Never the token: the ticket id is enough to look the receipt up.
+    else console.warn(`[notify] receipt ${ticket.id} came back ${code}: ${receipt.message ?? ""}`);
   }
   report.receipts_checked = answered.length;
   report.tokens_removed += await removeTokens(db, unregistered);
@@ -179,14 +205,26 @@ async function sendBook(db: SupabaseClient, accessToken: string, book: DueBook, 
   let failed = false;
 
   for (const batch of chunks(book.tokens, SEND_BATCH)) {
-    const messages = batch.map((to) => ({ to, title, body, data: { book_id: book.book_id }, channelId: CHANNEL_ID }));
+    const messages = batch.map((to) => ({
+      to,
+      title,
+      body,
+      data: { book_id: book.book_id },
+      channelId: CHANNEL_ID,
+      priority: PRIORITY,
+    }));
     try {
       const results = await expoPost<Ticket[]>(EXPO_SEND_URL, accessToken, messages);
       results.forEach((ticket, i) => {
         const token = batch[i];
-        if (ticket.status === "ok") tickets.push({ id: ticket.id, token });
-        else if (ticket.details?.error === "DeviceNotRegistered") unregistered.push(token);
-        else console.warn(`[notify] a message for book ${book.book_id} was refused: ${ticket.details?.error ?? ticket.message}`);
+        if (ticket.status === "ok") {
+          tickets.push({ id: ticket.id, token });
+          return;
+        }
+        const code = ticket.details?.error ?? "unknown";
+        countError(report.ticket_errors, code);
+        if (code === "DeviceNotRegistered") unregistered.push(token);
+        else console.warn(`[notify] a message for book ${book.book_id} was refused: ${code}: ${ticket.message ?? ""}`);
       });
       report.messages += results.filter((ticket) => ticket.status === "ok").length;
     } catch (error) {
@@ -222,6 +260,8 @@ async function run(db: SupabaseClient, accessToken: string): Promise<Report> {
     books_failed: 0,
     messages: 0,
     tokens_removed: 0,
+    ticket_errors: {},
+    receipt_errors: {},
   };
 
   // Receipts never hold up new alerts.

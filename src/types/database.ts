@@ -668,12 +668,14 @@ export type Database = {
           audio_duration_source:
             | Database["public"]["Enums"]["duration_source"]
             | null
+          audio_size_bytes: number | null
           book_id: string | null
           created_at: string | null
           has_audio: boolean | null
           has_text: boolean | null
           id: string | null
           number: number | null
+          text_bytes: number | null
           title: string | null
           updated_at: string | null
         }
@@ -799,6 +801,7 @@ export type Database = {
       }
     }
     Functions: {
+      can_play_audio: { Args: { object_name: string }; Returns: boolean }
       clerk_user_id: { Args: never; Returns: string }
       is_admin: { Args: never; Returns: boolean }
       notify_due_books: {
