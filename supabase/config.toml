@@ -390,6 +390,17 @@ deno_version = 2
 [functions.notify-new-chapters]
 verify_jwt = false
 
+# The mobile app's account deletion. Called with the reader's Clerk session
+# token, which the platform's check can't verify (it isn't a Supabase token),
+# so the function verifies it itself, against Clerk's JWKS.
+[functions.delete-account]
+verify_jwt = false
+
+# The mobile app's Help form, emailed to support through Resend. Called with
+# the reader's Clerk session token, which the function verifies itself.
+[functions.contact-support]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327

@@ -506,6 +506,17 @@ In the Story editor's Chapters table, a missing asset is a task, not a label:
 
 An operator should never see that something is missing without being able to fix it from where they are standing.
 
+### Public pages: Terms, Privacy, Help, account deletion
+
+Added 2026-10-01 for the mobile app's readers and its Google Play listing, at the owner's request (the mobile app's AGENTS.md, Decisions — 2026-10-01, "Legal pages, support and analytics deletion"). The only pages here a reader sees.
+
+- **Routes:** `/terms`, `/privacy`, `/help` and `/delete-account`, in the `(public)` route group. It sits outside `(dashboard)`, so `requireAdmin()` never runs, and `proxy.ts` guards nothing by design. They need no sign-in. Checked signed out on the dev server: each answered 200, while `/` still redirected to `/sign-in` (307).
+- **Content:** typed, in `src/data/public-pages.ts` (this file's data/ rule: no prose in components). `components/public/public-document.tsx` renders it, and `(public)/layout.tsx` adds the header (the mark and wordmark, as the sidebar draws them) and a footer linking all four pages and the support address.
+- **Look:** this repo's own tokens, as one readable column (720px at most) sized for a phone first, since readers open the pages from the app. Body text is 15px on a 24px line. Links are `text` with an underline, because `primary` on `page` is about 3:1, under AA for body text. No frame: for design review.
+- **`SUPPORT_EMAIL`** (`support@talebrim.com`) lives in the same file. The mobile app's `constants/support.ts` holds the same address: change both together.
+- **Keep them true.** Every statement describes what the app does today. When the app changes what it collects or keeps (rewarded ads with AdMob in its prompt 23, the RevenueCat customer deletion), change these pages in the same change and move `updated`.
+- **Not live until deployed.** The mobile app already links to Terms and Privacy (M1, M10, M11), so tapping one shows this site's 404 until they are deployed with the dashboard. Its Help no longer opens `/help`: it opens an in-app form that emails support through the `contact-support` function (Data Model Notes). `/help` stays for the website and the store listing.
+
 ---
 
 ## Image Generation Rules
@@ -1078,6 +1089,36 @@ The mobile repo's `AGENTS.md` (Data Contract) holds the full contract.
 - **Checked on 2026-09-28:** regenerated `src/types/database.ts` gained two lines and lost none, in both repos. `typecheck`, `lint` (0 errors, the 4 existing warnings) and `build` passed, as did `reader_tables_rls.sql` (47), `new_chapter_alerts_rls.sql` (57) and `audio_read_policy.sql` (20).
 - **Two narrations are still WAV** on 2026-09-28: Eternal Eclipse 1 (29.4 MB) and Man of Ashes 001 1 (31.1 MB), at 384 kbps. Their `.m4a` conversions (Upload Rules, "Narration format") wait to be uploaded; until then, a reader who downloads either book's first chapter downloads the WAV.
 
+**Readers delete their own accounts through `delete-account`** (`supabase/functions/delete-account`, the mobile app's prompt 25, M11 Profile). Google Play and Apple both require account deletion inside the app. **Deployed 2026-10-01 with the owner's yes, and proven over HTTP the same night** (below). It needs no migration and changes no table, policy or function.
+
+- **The caller** is the mobile app, with a `POST` and the reader's Clerk session token as the bearer. `verify_jwt` is off (`supabase/config.toml`), because the token is Clerk's, not Supabase's. The function verifies it itself with `jose`, against `{CLERK_ISSUER}/.well-known/jwks.json`: RS256, the issuer, and `exp` and `sub` required, allowing 5 seconds of clock skew as Clerk's SDK does. The account is the token's `sub`, never anything in the body. A missing or bad token gets 401.
+- **Admins get 403**, and nothing is deleted. The test is `is_admin()`'s rule: the nested `metadata.role` is `admin`. Admin accounts are deleted from this dashboard.
+- **The rows go first.** With the project's secret key, in this order: the `push_tickets` of the account's push tokens, then its `push_tokens`, `reading_positions`, `library_items` and `unlocks` rows. Those five tables hold everything keyed to a reader. Any failure answers 500 and leaves the Clerk user alone.
+- **Then the PostHog person** (added 2026-10-01, the owner's call): `POST {POSTHOG_HOST}/api/projects/{POSTHOG_PROJECT_ID}/persons/bulk_delete/` with the Clerk id as the one `distinct_ids` entry and `delete_events` and `delete_recordings` true. PostHog answers 202 and deletes the events in the background. It runs before Clerk, so a failure (502 `posthog_failed`) leaves the reader signed in to try again. The app flushes its queued events before the call, and afterwards sends `account_deleted` only under a new anonymous id, so nothing makes the person again.
+- **Then the Clerk user,** through `DELETE https://api.clerk.com/v1/users/{id}`. A 404 counts as done, so a retry after a half-way failure finishes the job. Anything else answers 502. Success answers 200 with the counts.
+- **It writes nothing this dashboard owns.** `books`, `chapters`, `app_settings` and `activity_log` are untouched, and so is every admin account.
+- **CORS** answers the mobile app's web preview, with supabase-js's own `corsHeaders`. **The log** holds counts and error codes only: never a token, an account id, an email or a name.
+- **Secrets, outside the repo:** `CLERK_SECRET_KEY` (the development instance's, which this repo's `.env` holds) and `CLERK_ISSUER` (`https://cheerful-walleye-3066.clerk.accounts.dev`), plus the project's own secret key, which Supabase injects. Since the PostHog step: `POSTHOG_PERSONAL_API_KEY` (a personal API key with person write access, limited to the `Talebrim_app` project), `POSTHOG_HOST` (`https://us.posthog.com`) and `POSTHOG_PROJECT_ID` (`628093`). Without all of them the function answers 500 `not_configured` rather than delete an account but leave its analytics. **The PostHog step is written and type-checked, and not deployed:** the deployed version has no PostHog step until the key exists. **At the production Clerk cutover (Deferred Security Tasks, item 3), change both Clerk secrets together**, or every deletion fails as an unverified token.
+- **Deploy** with `npx supabase functions deploy delete-account --no-verify-jwt --use-api --project-ref fwjrdzzdtshbqrfkgivd`. Both secrets were set with `npx supabase secrets set`, the Clerk key read from `.env` without being printed.
+- **Proven over HTTP on 2026-10-01**, against the deployed function:
+  - A CORS preflight answered 200 and a `GET` 405. No token, a garbage token, and a forged token naming a real reader each answered 401.
+  - Two throwaway `+clerk_test` readers, made through Clerk's Backend API, were each seeded with a position, a My List book, an unlock, a push token and a push ticket.
+  - The first, with a freshly minted session token, answered 200 with one row from each table and `clerk_user: "deleted"`. Clerk then answered 404 for it, and its rows were gone.
+  - The second, with a token left to expire, answered 401 with nothing deleted. Then it was deleted in Clerk first, and a fresh token answered 200 with `clerk_user: "already_gone"`: a retry after a half-way failure finishes the job.
+  - An admin (`skywavehost.teams@gmail.com`, with the owner's yes; the token was decoded first and carried `metadata.role: admin`) answered 403. The session was revoked, and nothing changed.
+  - Every other reader's rows (count and md5 of their ids, per table) were the same before and after.
+- **Later:** once RevenueCat exists, it also deletes the reader's RevenueCat customer (`TODO(paywall)` in the function).
+- **Checked 2026-10-01:** `deno check` passes. So do `typecheck`, `lint` (0 errors, the 4 existing warnings) and `build`, since `supabase/functions/` is outside them.
+
+**Readers write to support through `contact-support`** (`supabase/functions/contact-support`, 2026-10-01, the owner's request: the mobile app's M11 Help opens a form). It emails each message to `support@talebrim.com` through Resend. **Deployed 2026-10-01.** It needs no migration and stores nothing in the database.
+
+- **The caller** is the mobile app, with a `POST`, the reader's Clerk session token as the bearer (verified as `delete-account` verifies it), and `{ topic, message, context }`. The topic is one of `account`, `reading`, `downloads`, `subscription` or `other`, as in the app's `lib/support.ts`: change both together. The message runs from 1 to 4000 characters, and the context strings (app version, platform, OS version, phone model) are capped at 60 characters each. Anything else gets 400.
+- **The reply goes to the account.** The function reads the account's primary email and name from Clerk's Backend API and makes the email the Reply-To. Nothing in the request can set it.
+- **5 messages an hour per account**, counted in the account's Clerk private metadata (`support.sent`, only the server sees it). Beyond that: 429 with Retry-After.
+- **The email** is plain text: the message, then the sender, the account id, the topic, the app and phone, and the time. Resend refusing or unreachable answers 502. The log names outcomes and codes only.
+- **Settings:** `SUPPORT_EMAIL_TO` (`support@talebrim.com`) and `SUPPORT_EMAIL_FROM` (`Talebrim app <onboarding@resend.dev>`) are set, as are the two Clerk secrets it shares with `delete-account`. Until talebrim.com is verified in Resend, Resend's own sender delivers only to the address the Resend account signed up with, so the account must sign up as `support@talebrim.com`. Afterwards `SUPPORT_EMAIL_FROM` moves to an address on talebrim.com, with no code change. **`RESEND_API_KEY` waits for the owner.** Until then the send step answers 500 `not_configured`.
+- **Proven 2026-10-01:** a CORS preflight answered 200 and a `GET` 405, and no token or a garbage token 401. With a throwaway reader's real token, an unknown topic, an empty message, a 4001-character message and no body each answered 400, and a valid message answered 500 `not_configured`. The reader was then deleted. Still to prove with the key: delivery with the right Reply-To, and 429 on the sixth message in an hour.
+
 **Book-level audiobook upload is not built, and must not be.** A single whole-book audio file cannot be reliably split into per-chapter tracks; the mobile player queues one track per chapter, and read/listen parity stores an audio position scoped to a chapter id. A whole-book file breaks that parity, which this document ranks above every other feature. Narration is per-chapter only. Do not re-propose a book-level audio drop.
 
 ---
@@ -1210,6 +1251,8 @@ These are known, accepted-for-now gaps, deliberately deferred while the dashboar
    Nothing about authentication, RLS, or data access differs between the two instances. This is a deliverability-and-polish trade, not a security one.
 
    **Revisit if** the tool is ever used by people outside the team, invitations start being missed, or the instance needs to send mail that must not land in spam.
+
+   **A cutover now also moves the `delete-account` function's two secrets** (Data Model Notes, "Readers delete their own accounts", 2026-10-01): `CLERK_SECRET_KEY` and `CLERK_ISSUER` change together with the instance, or every reader's account deletion fails as an unverified token.
 
    **Was: CONFIGURED BUT ROLLED BACK, 2026-09-19.** Everything was set up and verified working, then the sign-in card stopped rendering on `talebrim.com` and the app was rolled back to the development instance by restoring the `pk_test_`/`sk_test_` values in Vercel. **The cause is unresolved.** The production instance retains every setting — DNS, certificates, the Supabase issuer registration, the session-token claim, the Supabase integration, Google OAuth — so retrying is swapping two environment variables back. `docs/PRODUCTION-CLERK-CUTOVER.md` holds the full procedure, the evidence table of what is ruled out, and the browser-side diagnostic to run **first** next time.
 
