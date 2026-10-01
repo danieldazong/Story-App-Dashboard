@@ -1,6 +1,7 @@
 // contact-support: a reader's message from the Talebrim mobile app's Help
-// form (M11, the owner's request on 2026-10-01), emailed to
-// support@talebrim.com through Resend, with the reader's address to reply to.
+// form (M11, the owner's request on 2026-10-01), emailed to the support inbox
+// (SUPPORT_EMAIL_TO: support@nouvrix.com, the parent company's, since
+// 2026-10-01) through Resend, with the reader's address to reply to.
 //
 // Called by the app with a POST, the reader's Clerk session token as the
 // bearer, and { topic, message, context }. Deployed with verify_jwt off, as
@@ -18,7 +19,8 @@
 //      More than 5 in the last hour: 429, with Retry-After.
 //   3. The email, through Resend: to SUPPORT_EMAIL_TO, from
 //      SUPPORT_EMAIL_FROM (an address on the domain verified in Resend),
-//      replying to the reader. Plain text. Anything but 2xx: 502.
+//      replying to the reader. HTML in Talebrim's colours, with a plain-text
+//      twin; the reader's words are escaped. Anything but 2xx: 502.
 //   4. The send's time joins the account's recent sends (private metadata,
 //      which Clerk deep-merges). A failure there is logged, not returned:
 //      the message went.
@@ -31,15 +33,17 @@
 // Secrets, none of which leave this function: CLERK_SECRET_KEY and
 // CLERK_ISSUER (shared with delete-account; both change together at the
 // production Clerk cutover), RESEND_API_KEY, SUPPORT_EMAIL_TO and
-// SUPPORT_EMAIL_FROM. Until talebrim.com is verified in Resend, the sender is
-// Resend's own onboarding@resend.dev, which delivers only to the address the
-// Resend account signed up with: so that is support@talebrim.com. Once the
-// domain is verified, SUPPORT_EMAIL_FROM moves to an address on it; no code
-// changes. The log holds outcomes and codes only: never the message, an
+// SUPPORT_EMAIL_FROM. Until a sending domain is verified in Resend, the
+// sender is Resend's own onboarding@resend.dev, which delivers only to the
+// address the Resend account signed up with: so that is support@nouvrix.com.
+// Once the domain is verified, SUPPORT_EMAIL_FROM moves to an address on it;
+// no code changes. The log holds outcomes and codes only: never the message, an
 // address, a name or a token.
 
 import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "npm:jose@6";
+
+import { buildEmail } from "./email.ts";
 
 const CLERK_API = "https://api.clerk.com/v1";
 const RESEND_API = "https://api.resend.com/emails";
@@ -163,35 +167,6 @@ async function readAccount(userId: string, clerkSecret: string): Promise<Account
   }
 }
 
-/** The subject: the topic and the start of the message, on one line. */
-function subjectFor(topic: string, message: string): string {
-  const start = message.replace(/\s+/g, " ").trim();
-  const excerpt = start.length > 60 ? `${start.slice(0, 57)}...` : start;
-  return `Talebrim help: ${TOPICS[topic]} - ${excerpt}`;
-}
-
-/** The body: the message, then who sent it and from what. Plain text, so nothing in it renders. */
-function textFor(userId: string, account: Account, topic: string, message: string, context: Context): string {
-  const from = account.email ? (account.name ? `${account.name} <${account.email}>` : account.email) : "(no email on the account)";
-  const app = [
-    context.appVersion ? `Talebrim ${context.appVersion}${context.appBuild ? ` (${context.appBuild})` : ""}` : null,
-    [context.platform, context.osVersion].filter(Boolean).join(" ") || null,
-    context.deviceModel,
-  ]
-    .filter(Boolean)
-    .join(", ");
-  return [
-    message,
-    "",
-    "--",
-    `From: ${from}`,
-    `Account: ${userId}`,
-    `Topic: ${TOPICS[topic]}`,
-    `App: ${app || "unknown"}`,
-    `Sent: ${new Date().toISOString()}`,
-  ].join("\n");
-}
-
 Deno.serve(async (request) => {
   // The web preview's browser asks first.
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -232,6 +207,13 @@ Deno.serve(async (request) => {
     return respond(500, { error: "not_configured" });
   }
 
+  const email = buildEmail({
+    userId,
+    sender: { name: account.name, email: account.email },
+    topic: TOPICS[body.topic],
+    message: body.message,
+    device: body.context,
+  });
   try {
     const response = await fetch(RESEND_API, {
       method: "POST",
@@ -240,8 +222,9 @@ Deno.serve(async (request) => {
         from,
         to: [to],
         ...(account.email ? { reply_to: account.email } : {}),
-        subject: subjectFor(body.topic, body.message),
-        text: textFor(userId, account, body.topic, body.message, body.context),
+        subject: email.subject,
+        html: email.html,
+        text: email.text,
       }),
     });
     if (!response.ok) {

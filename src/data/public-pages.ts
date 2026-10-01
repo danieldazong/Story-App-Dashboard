@@ -7,8 +7,12 @@
 // changes what it collects (rewarded ads, the RevenueCat customer deletion),
 // change these pages in the same change, and move `updated`.
 
-/** Where readers write to. The app's `constants/support.ts` holds the same address. */
-export const SUPPORT_EMAIL = "support@talebrim.com";
+/**
+ * Where readers write to: the parent company Nouvrix's inbox (the owner,
+ * 2026-10-01). The `contact-support` function's `SUPPORT_EMAIL_TO` holds the
+ * same address: change both together. The app shows no address.
+ */
+export const SUPPORT_EMAIL = "support@nouvrix.com";
 
 /** A run of text, or a link inside it. */
 export type Inline = string | { text: string; href: string };
@@ -237,10 +241,10 @@ export const TERMS_OF_SERVICE: PublicDocument = {
     },
     {
       id: "subscription",
-      heading: "The Ad-Free subscription",
+      heading: "The Talebrim Unlimited subscription",
       blocks: [
         list(
-          ["The Ad-Free subscription unlocks the chapters that are locked. Its plans and prices are shown in the app before you buy."],
+          ["Talebrim Unlimited unlocks the chapters that are locked. Its plans and prices are shown in the app before you buy."],
           ["Payment is handled by Google Play and charged to your Google account."],
           [
             "A subscription renews automatically at the end of each period until you cancel it. You can cancel at any time in Google Play, and you keep access until the end of the period you've paid for.",
@@ -365,10 +369,10 @@ export const HELP: PublicDocument = {
     },
     {
       id: "locked-chapters",
-      heading: "Locked chapters and Ad-Free",
+      heading: "Locked chapters and Talebrim Unlimited",
       blocks: [
         p(
-          "Some chapters are locked. The Ad-Free subscription unlocks them: tap Go Ad-Free on a locked chapter, or See plans in Profile.",
+          "Some chapters are locked. The Talebrim Unlimited subscription unlocks them: tap See plans on a locked chapter, or in Profile.",
         ),
         p(
           "Subscribed already, on a new phone? Use Restore purchase in Profile. To change or cancel your plan, use Manage subscription in Profile, or Google Play.",
@@ -482,7 +486,7 @@ export const DELETE_ACCOUNT: PublicDocument = {
       blocks: [
         list(
           [
-            "Google Play keeps its own records of your purchases. Deleting your account doesn't cancel an Ad-Free subscription: cancel it in Google Play first, or it will keep renewing.",
+            "Google Play keeps its own records of your purchases. Deleting your account doesn't cancel a Talebrim Unlimited subscription: cancel it in Google Play first, or it will keep renewing.",
           ],
           ["Copies of deleted data can remain in our providers' backups for a limited time before they're overwritten."],
           ["If you've written to us, from the app or by email, we keep that conversation for as long as we need it to help you."],
