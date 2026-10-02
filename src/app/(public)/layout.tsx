@@ -1,7 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { images } from "@/constants/images";
-import { PUBLIC_PAGES, SUPPORT_EMAIL } from "@/data/public-pages";
+import { OPERATOR_LINE, PUBLIC_PAGES, SUPPORT_EMAIL } from "@/data/public-pages";
 
 /**
  * talebrim.com's public pages: Terms, Privacy, Help and account deletion, for
@@ -37,6 +37,7 @@ export default function PublicLayout({ children }: { children: React.ReactNode }
             {SUPPORT_EMAIL}
           </a>
         </nav>
+        <p className="mx-auto w-full max-w-[720px] px-5 pb-6 text-[13px] text-muted">{OPERATOR_LINE}</p>
       </footer>
     </div>
   );

@@ -14,6 +14,16 @@
  */
 export const SUPPORT_EMAIL = "support@nouvrix.com";
 
+/**
+ * Who provides Talebrim (the owner, 2026-10-02): Nouvrix LLC, registered in
+ * North Carolina, United States, whose law governs the Terms.
+ */
+const OPERATOR = "Nouvrix LLC";
+const OPERATOR_FULL = `${OPERATOR}, a limited liability company registered in North Carolina, United States`;
+
+/** The footer's line under the links, on every page. */
+export const OPERATOR_LINE = `Talebrim is provided by ${OPERATOR}, North Carolina, United States.`;
+
 /** A run of text, or a link inside it. */
 export type Inline = string | { text: string; href: string };
 
@@ -42,7 +52,7 @@ export type PublicDocument = {
   sections: PublicSection[];
 };
 
-const UPDATED = "1 October 2026";
+const UPDATED = "2 October 2026";
 
 function email(subject?: string): Inline {
   const query = subject ? `?subject=${encodeURIComponent(subject)}` : "";
@@ -74,6 +84,17 @@ export const PRIVACY_POLICY: PublicDocument = {
     p("We don't sell your personal information, and we don't use it for advertising."),
   ],
   sections: [
+    {
+      id: "who-we-are",
+      heading: "Who we are",
+      blocks: [
+        p(
+          `Talebrim is provided by ${OPERATOR_FULL} ("we", "us"). We're responsible for the personal information this policy describes. You can reach us at `,
+          email(),
+          ".",
+        ),
+      ],
+    },
     {
       id: "what-we-collect",
       heading: "What we collect",
@@ -198,7 +219,7 @@ export const PRIVACY_POLICY: PublicDocument = {
     {
       id: "contact",
       heading: "Contact",
-      blocks: [p("Questions or requests about your data: ", email(), ".")],
+      blocks: [p(`${OPERATOR}, North Carolina, United States. Questions or requests about your data: `, email(), ".")],
     },
   ],
 };
@@ -211,7 +232,7 @@ export const TERMS_OF_SERVICE: PublicDocument = {
   updated: UPDATED,
   intro: [
     p(
-      "These terms apply when you use the Talebrim app or talebrim.com. By creating an account or using the app, you agree to them. Please read them with our ",
+      `These terms are an agreement between you and ${OPERATOR_FULL} ("we", "us"), which provides Talebrim. They apply when you use the Talebrim app or talebrim.com. By creating an account or using the app, you agree to them. Please read them with our `,
       { text: "Privacy Policy", href: "/privacy" },
       ".",
     ),
@@ -269,7 +290,7 @@ export const TERMS_OF_SERVICE: PublicDocument = {
       heading: "Using the stories",
       blocks: [
         p(
-          "The stories, including their text, narration and artwork, belong to Talebrim or to their authors and licensors. We give you a personal, non-transferable licence to read and listen to them in the app, for your own non-commercial use.",
+          "The stories, including their text, narration and artwork, belong to Nouvrix LLC or to their authors and licensors. We give you a personal, non-transferable licence to read and listen to them in the app, for your own non-commercial use.",
         ),
         p(
           "Don't copy, record, share, sell or publish them, and don't try to get around locked chapters or the limits on downloads.",
@@ -313,6 +334,15 @@ export const TERMS_OF_SERVICE: PublicDocument = {
       ],
     },
     {
+      id: "governing-law",
+      heading: "Governing law",
+      blocks: [
+        p(
+          "These terms are governed by the laws of the State of North Carolina, United States, without regard to its conflict-of-law rules. If you live outside the United States, you keep any protection that the consumer laws of your country give you and that can't be waived by agreement.",
+        ),
+      ],
+    },
+    {
       id: "changes",
       heading: "Changes to these terms",
       blocks: [
@@ -324,7 +354,7 @@ export const TERMS_OF_SERVICE: PublicDocument = {
     {
       id: "contact",
       heading: "Contact",
-      blocks: [p("Questions about these terms: ", email(), ".")],
+      blocks: [p(`${OPERATOR}, North Carolina, United States. Questions about these terms: `, email(), ".")],
     },
   ],
 };
@@ -438,7 +468,7 @@ export const DELETE_ACCOUNT: PublicDocument = {
   updated: UPDATED,
   intro: [
     p(
-      "You can delete your Talebrim account at any time. Deleting it removes your account and the data saved to it, and it can't be undone.",
+      `You can delete your Talebrim account at any time. Deleting it removes your account and the data saved to it, and it can't be undone. Talebrim is provided by ${OPERATOR}.`,
     ),
   ],
   sections: [
