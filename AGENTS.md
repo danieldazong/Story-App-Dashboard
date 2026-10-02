@@ -522,7 +522,7 @@ Added 2026-10-01 for the mobile app's readers and its Google Play listing, at th
   - There is no court, venue or arbitration clause: that needs a lawyer.
   - Published 2026-10-02.
 - **Keep them true.** Every statement describes what the app does today. When the app changes what it collects or keeps (rewarded ads with AdMob in its prompt 23, next), change these pages in the same change and move `updated`.
-- **The subscription status, since 2026-10-02** (the mobile app's prompt 22a): Privacy says the status is also kept on our servers (active, end, plan and store) so the chapters it opens can be served, lists it with Supabase, and says deletion removes it and the record at RevenueCat; the deletion page's "What's deleted" adds both.
+- **The subscription status, since 2026-10-02** (the mobile app's prompt 22a): Privacy says the status is also kept on our servers (active, end, plan and store) so the chapters it opens can be served, lists it with Supabase, and says deletion removes it and the record at RevenueCat; the deletion page's "What's deleted" adds both. Published the same day with the owner's yes (commit `527930f`, `main` fast-forwarded from `f63d269`); about a minute later both lines were live and all four pages answered 200.
 - **Live since 2026-10-01.** Published at the owner's approval, by fast-forwarding `main` to `dev` (`fd615ad`). All four pages answered 200 about 50 seconds after the push, giving `support@nouvrix.com`. The mobile app's Terms and Privacy links (M1, M10, M11) open them. The app's Help no longer opens `/help`: it opens an in-app form that emails support through the `contact-support` function (Data Model Notes). `/help` stays for the website and the store listing.
 
 ---
