@@ -4,8 +4,10 @@
 // `components/public/public-document.tsx`.
 //
 // Every statement here describes what the app actually does. When the app
-// changes what it collects (rewarded ads, the RevenueCat customer deletion),
-// change these pages in the same change, and move `updated`.
+// changes what it collects (rewarded ads, next), change these pages in the
+// same change, and move `updated`. The subscription status kept on our
+// servers, and the RevenueCat customer deleted with the account, were added
+// with the mobile app's prompt 22a (2026-10-02).
 
 /**
  * Where readers write to: the parent company Nouvrix's inbox (the owner,
@@ -113,7 +115,7 @@ export const PRIVACY_POLICY: PublicDocument = {
             "Usage analytics. We record how the app is used: for example, which screens are opened, when a chapter is started or finished, and whether a download or a purchase worked. Each event carries technical details: the app's version, your device's make and model, its operating system and version, and its screen size. Events are linked to your account's ID, never to your name or email, and never include what you search for or the text you read. We don't store your IP address or your location. You can turn analytics off at any time in Profile → Usage analytics.",
           ],
           [
-            "Purchases. If you subscribe, Google Play handles the payment, and we never see your payment details. We receive the status of your subscription, such as whether it's active and when it renews. Our subscription service, RevenueCat, receives your account's ID and your purchase receipts in order to check it.",
+            "Purchases. If you subscribe, Google Play handles the payment, and we never see your payment details. We receive the status of your subscription, such as whether it's active and when it renews. Our subscription service, RevenueCat, receives your account's ID and your purchase receipts in order to check it. We also keep your subscription's status on our servers (whether it's active, when it ends, and the plan and store it came from), so the chapters it opens can be served to you.",
           ],
           [
             "Messages. When you write to us from Profile → Help, your message reaches us by email with your account's email address and ID, your name if your account has one, the app's version and your phone's model, so we can reply and look into it. Whether you write from the app or by email, we keep the conversation so we can help you.",
@@ -132,7 +134,7 @@ export const PRIVACY_POLICY: PublicDocument = {
           ["to run your account and keep you signed in;"],
           ["to keep your reading and listening place in step across your devices, with your My List and your unlocked chapters;"],
           ["to send the new-chapter alerts you've asked for;"],
-          ["to check whether you have an active subscription;"],
+          ["to check whether you have an active subscription, and serve the chapters it opens;"],
           ["to understand how the app is used and fix what doesn't work, through analytics you can turn off;"],
           ["to answer your messages, and to keep the service and your account secure."],
         ),
@@ -145,7 +147,7 @@ export const PRIVACY_POLICY: PublicDocument = {
         list(
           ["Clerk: sign-in and account management."],
           [
-            "Supabase: the database and storage that hold your reading activity, My List, unlocked chapters and notification token, and the stories themselves.",
+            "Supabase: the database and storage that hold your reading activity, My List, unlocked chapters, subscription status and notification token, and the stories themselves.",
           ],
           ["PostHog: usage analytics."],
           ["Expo and Google Firebase Cloud Messaging: delivering new-chapter alerts to your phone."],
@@ -163,7 +165,7 @@ export const PRIVACY_POLICY: PublicDocument = {
       heading: "How long we keep it",
       blocks: [
         p(
-          "We keep your account and reading data for as long as you have an account. When you delete your account, we delete your account details, reading places, My List, unlocked chapters, notification token, and your analytics profile and events. PostHog removes the events in the background, which can take some time.",
+          "We keep your account and reading data for as long as you have an account. When you delete your account, we delete your account details, reading places, My List, unlocked chapters, subscription status, notification token, your record at RevenueCat, and your analytics profile and events. PostHog removes the events in the background, which can take some time.",
         ),
         p(
           "Google Play keeps its own records of your purchases. Copies of deleted data can remain in our providers' backups for a limited time before they're overwritten.",
@@ -504,6 +506,7 @@ export const DELETE_ACCOUNT: PublicDocument = {
           ["your reading and listening places;"],
           ["your My List;"],
           ["the chapters unlocked on your account;"],
+          ["your subscription status, and your record at RevenueCat, our subscription service;"],
           ["the token used to send you new-chapter alerts;"],
           ["your usage analytics profile and its events."],
         ),

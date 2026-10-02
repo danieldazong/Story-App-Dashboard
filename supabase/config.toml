@@ -401,6 +401,17 @@ verify_jwt = false
 [functions.contact-support]
 verify_jwt = false
 
+# The entitlement mirror (the mobile app's prompt 22a). RevenueCat calls the
+# webhook with the Authorization value set in its dashboard, which the
+# function compares itself; it isn't a Supabase token.
+[functions.revenuecat-webhook]
+verify_jwt = false
+
+# The app asks the server to check the reader's plan with RevenueCat. Called
+# with the reader's Clerk session token, which the function verifies itself.
+[functions.sync-entitlement]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327

@@ -13,16 +13,20 @@
 //   1. A token whose `metadata.role` is "admin" (is_admin()'s rule) gets 403
 //      and nothing is deleted: admin accounts are deleted from the dashboard.
 //   2. With the project's own secret key: the push_tickets of this account's
-//      push tokens, then its push_tokens, reading_positions, library_items and
-//      unlocks rows. Those five tables hold everything keyed to a reader. Any
-//      failure: 500, and the Clerk user is left alone.
-//   3. The reader's PostHog person, with their events and recordings, through
+//      push tokens, then its push_tokens, reading_positions, library_items,
+//      unlocks and entitlements rows. Those six tables hold everything keyed
+//      to a reader. Any failure: 500, and the Clerk user is left alone.
+//   3. The reader's RevenueCat customer (the mobile app's prompt 22a), so no
+//      record of their purchases stays behind the account. A 404 counts as
+//      done. Anything else: 502, and the reader can still retry. It doesn't
+//      cancel a Google Play subscription: the app's warning says so first.
+//   4. The reader's PostHog person, with their events and recordings, through
 //      PostHog's bulk delete (the app identifies readers by their Clerk id).
 //      PostHog deletes the events in the background. Before Clerk, so a
 //      failure here (502) still leaves the reader signed in to try again.
-//   4. The Clerk user, through Clerk's Backend API. A 404 counts as done, so a
+//   5. The Clerk user, through Clerk's Backend API. A 404 counts as done, so a
 //      retry after a half-way failure finishes the job. Anything else: 502.
-//   5. 200 with the counts.
+//   6. 200 with the counts.
 //
 // It writes nothing the dashboard owns: books, chapters, app_settings and
 // activity_log are untouched.
@@ -30,16 +34,16 @@
 // Secrets, none of which leave this function: CLERK_SECRET_KEY and
 // CLERK_ISSUER (the development instance's today; both change together at
 // the production Clerk cutover); POSTHOG_PERSONAL_API_KEY (a personal API key
-// that can write persons), with POSTHOG_HOST and POSTHOG_PROJECT_ID; and the
-// project's own secret key (injected by Supabase). The log names counts only:
-// never a token, an account id, an email or a name.
-//
-// TODO(paywall): once RevenueCat exists, also delete the reader's RevenueCat
-// customer.
+// that can write persons), with POSTHOG_HOST and POSTHOG_PROJECT_ID;
+// REVENUECAT_SECRET_KEY and REVENUECAT_PROJECT_ID (_shared/entitlements.ts);
+// and the project's own secret key (injected by Supabase). The log names
+// counts only: never a token, an account id, an email or a name.
 
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "npm:jose@6";
+
+import { deleteCustomer, revenueCatApi } from "../_shared/entitlements.ts";
 
 const CLERK_API = "https://api.clerk.com/v1";
 /** A Clerk user id, as every reader table stores it. Checked before it reaches a query. */
@@ -47,8 +51,12 @@ const USER_ID = /^user_[A-Za-z0-9]+$/;
 /** Clerk session tokens live 60 seconds; this allows a few seconds of clock skew, as Clerk's own SDK does. */
 const CLOCK_TOLERANCE_SECONDS = 5;
 
-/** Each reader table, by its account column. push_tickets has none: it goes by token, first. */
-const READER_TABLES = ["push_tokens", "reading_positions", "library_items", "unlocks"] as const;
+/**
+ * Each reader table, by its account column. push_tickets has none: it goes by
+ * token, first. entitlements is the server's copy of the reader's plan
+ * (prompt 22a).
+ */
+const READER_TABLES = ["push_tokens", "reading_positions", "library_items", "unlocks", "entitlements"] as const;
 
 type Counts = {
   push_tickets: number;
@@ -56,13 +64,16 @@ type Counts = {
   reading_positions: number;
   library_items: number;
   unlocks: number;
+  entitlements: number;
+  /** RevenueCat's customer: deleted now, or already gone (never made, or an earlier call). */
+  revenuecat_customer: "deleted" | "already_gone";
   /** PostHog accepted the deletion: the person at once, their events in the background. */
   posthog_person: "deleted";
   /** Deleted now, or already gone by an earlier call. */
   clerk_user: "deleted" | "already_gone";
 };
 
-type RowCounts = Omit<Counts, "posthog_person" | "clerk_user">;
+type RowCounts = Omit<Counts, "revenuecat_customer" | "posthog_person" | "clerk_user">;
 
 type PostHog = { host: string; projectId: string; apiKey: string };
 
@@ -110,7 +121,7 @@ function isAdmin(claims: JWTPayload): boolean {
   return typeof metadata === "object" && metadata !== null && (metadata as { role?: unknown }).role === "admin";
 }
 
-/** Step 2: every row keyed to the account. Throws on the first failure. */
+/** Step 2: every row keyed to the account, its plan's row included. Throws on the first failure. */
 async function deleteRows(db: SupabaseClient, userId: string): Promise<RowCounts> {
   const { data: tokens, error } = await db.from("push_tokens").select("token").eq("user_id", userId);
   if (error) throw error;
@@ -123,7 +134,14 @@ async function deleteRows(db: SupabaseClient, userId: string): Promise<RowCounts
     pushTickets = tickets.count ?? 0;
   }
 
-  const counts = { push_tickets: pushTickets, push_tokens: 0, reading_positions: 0, library_items: 0, unlocks: 0 };
+  const counts = {
+    push_tickets: pushTickets,
+    push_tokens: 0,
+    reading_positions: 0,
+    library_items: 0,
+    unlocks: 0,
+    entitlements: 0,
+  };
   for (const table of READER_TABLES) {
     const deleted = await db.from(table).delete({ count: "exact" }).eq("user_id", userId);
     if (deleted.error) throw deleted.error;
@@ -133,7 +151,7 @@ async function deleteRows(db: SupabaseClient, userId: string): Promise<RowCounts
 }
 
 /**
- * Step 3: the reader's PostHog person, with their events and recordings, by
+ * Step 4: the reader's PostHog person, with their events and recordings, by
  * the distinct id the app identifies them with, their Clerk id. PostHog
  * answers 202 and deletes the events in the background. Null when PostHog
  * refused, or couldn't be reached.
@@ -157,7 +175,7 @@ async function deletePostHogPerson(userId: string, posthog: PostHog): Promise<Co
   }
 }
 
-/** Step 4. Null when Clerk refused, or couldn't be reached. */
+/** Step 5. Null when Clerk refused, or couldn't be reached. */
 async function deleteClerkUser(userId: string, clerkSecret: string): Promise<Counts["clerk_user"] | null> {
   try {
     const response = await fetch(`${CLERK_API}/users/${encodeURIComponent(userId)}`, {
@@ -187,10 +205,11 @@ Deno.serve(async (request) => {
     projectId: Deno.env.get("POSTHOG_PROJECT_ID") ?? "",
     apiKey: Deno.env.get("POSTHOG_PERSONAL_API_KEY") ?? "",
   };
-  // Every one is needed: an account deleted without its analytics would
-  // break what the app and the deletion page promise.
-  if (!issuer || !clerkSecret || !url || !posthog.host || !posthog.projectId || !posthog.apiKey) {
-    console.error("[delete-account] a Clerk, PostHog or Supabase setting is not set");
+  const revenueCat = revenueCatApi();
+  // Every one is needed: an account deleted without its analytics or its
+  // purchase record would break what the app and the deletion page promise.
+  if (!issuer || !clerkSecret || !url || !posthog.host || !posthog.projectId || !posthog.apiKey || !revenueCat) {
+    console.error("[delete-account] a Clerk, PostHog, RevenueCat or Supabase setting is not set");
     return respond(500, { error: "not_configured" });
   }
 
@@ -212,19 +231,34 @@ Deno.serve(async (request) => {
     return respond(500, { error: "rows_failed" });
   }
 
+  // Step 3. RevenueCat's own 404 counts as done.
+  const revenuecatCustomer = await deleteCustomer(revenueCat, userId);
+  if (revenuecatCustomer === null) {
+    console.log("[delete-account] rows deleted, RevenueCat customer not:", JSON.stringify(rows));
+    return respond(502, { error: "revenuecat_failed" });
+  }
+
   const posthogPerson = await deletePostHogPerson(userId, posthog);
   if (posthogPerson === null) {
-    console.log("[delete-account] rows deleted, PostHog person not:", JSON.stringify(rows));
+    console.log("[delete-account] rows and RevenueCat customer deleted, PostHog person not:", JSON.stringify(rows));
     return respond(502, { error: "posthog_failed" });
   }
 
   const clerkUser = await deleteClerkUser(userId, clerkSecret);
   if (clerkUser === null) {
-    console.log("[delete-account] rows and PostHog person deleted, Clerk user not:", JSON.stringify(rows));
+    console.log(
+      "[delete-account] rows, RevenueCat customer and PostHog person deleted, Clerk user not:",
+      JSON.stringify(rows),
+    );
     return respond(502, { error: "clerk_failed" });
   }
 
-  const counts: Counts = { ...rows, posthog_person: posthogPerson, clerk_user: clerkUser };
+  const counts: Counts = {
+    ...rows,
+    revenuecat_customer: revenuecatCustomer,
+    posthog_person: posthogPerson,
+    clerk_user: clerkUser,
+  };
   console.log("[delete-account]", JSON.stringify(counts));
   return respond(200, counts);
 });
