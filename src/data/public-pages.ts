@@ -4,10 +4,10 @@
 // `components/public/public-document.tsx`.
 //
 // Every statement here describes what the app actually does. When the app
-// changes what it collects (rewarded ads, next), change these pages in the
-// same change, and move `updated`. The subscription status kept on our
-// servers, and the RevenueCat customer deleted with the account, were added
-// with the mobile app's prompt 22a (2026-10-02).
+// changes what it collects (rewarded ads, if version 2 adds them), change
+// these pages in the same change, and move `updated`. The subscription
+// status kept on our servers, and the RevenueCat customer deleted with the
+// account, were added with the mobile app's prompt 22a (2026-10-02).
 
 /**
  * Where readers write to: the parent company Nouvrix's inbox (the owner,
